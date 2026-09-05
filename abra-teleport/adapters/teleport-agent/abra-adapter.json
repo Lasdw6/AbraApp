@@ -1,0 +1,1 @@
+{"spec":"abra-adapter/1","name":"dev.abra.teleport-agent","version":"0.1.0","kinds":["dev.abra.teleport.agent.v1"],"controls":["dev.abra.workspace"],"verbs":["export","control"],"executable":"bin/adapter.js"}

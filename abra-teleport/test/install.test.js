@@ -1,0 +1,44 @@
+import assert from 'node:assert/strict';
+import { execFile } from 'node:child_process';
+import { createHash } from 'node:crypto';
+import { mkdtemp, mkdir, readFile, writeFile, rm } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import { promisify } from 'node:util';
+import test from 'node:test';
+import { connectionCommand } from '../src/install.js';
+const exec = promisify(execFile);
+const template = await readFile(new URL('../scripts/connect.sh', import.meta.url), 'utf8');
+
+test('connection command requires HTTPS and keeps the ticket out of the download URL', () => {
+  const ticket = 'abra-pair/1/test';
+  const output = connectionCommand(ticket, 'https://example.com/connect.sh');
+  assert.equal(output.installs_cli, true);
+  assert.match(output.command, /connect\.sh' \| bash -s -- 'abra-pair\/1\/test'$/);
+  assert.throws(() => connectionCommand(ticket, 'http://example.com/install'));
+  assert.throws(() => connectionCommand(ticket, 'https://user:secret@example.com/install'));
+});
+
+test('bootstrap installs once, pairs again without downloading, and rejects a corrupt archive', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'abra-bootstrap-test-'));
+  try {
+    const bin = path.join(root, 'bin'), mock = path.join(root, 'mock'), staged = path.join(root, 'package/abra-teleport/scripts');
+    await Promise.all([mkdir(bin), mkdir(mock), mkdir(staged, { recursive: true })]);
+    await writeFile(path.join(staged, 'install-agent.sh'), `#!/bin/bash\nset -eu\nprintf '#!/bin/bash\\nif [[ "$1" == --help ]]; then echo "agent connect"; else echo "$1 $2" >> "$PAIR_LOG"; fi\\n' > "$ABRA_TELEPORT_BIN_DIR/abra-teleport"\nchmod +x "$ABRA_TELEPORT_BIN_DIR/abra-teleport"\n`);
+    const archive = path.join(root, 'archive.tar.gz');
+    await exec('tar', ['-czf', archive, '-C', path.join(root, 'package'), 'abra-teleport']);
+    await writeFile(path.join(mock, 'curl'), '#!/bin/bash\nset -eu\necho download >> "$DOWNLOAD_LOG"\nwhile [[ "$1" != -o ]]; do shift; done\ncp "$FIXTURE_ARCHIVE" "$2"\n', { mode: 0o755 });
+    const digest = createHash('sha256').update(await readFile(archive)).digest('hex');
+    const script = path.join(root, 'connect.sh');
+    await writeFile(script, template.replace('@ARCHIVE_URL@', 'https://example.com/agent.tar.gz').replace('@ARCHIVE_SHA256@', digest));
+    const env = { ...process.env, PATH: `${mock}:/usr/bin:/bin`, ABRA_TELEPORT_BIN_DIR: bin, PAIR_LOG: path.join(root, 'pairs'), DOWNLOAD_LOG: path.join(root, 'downloads'), FIXTURE_ARCHIVE: archive };
+    await exec('bash', [script, 'abra-pair/1/fixture'], { env });
+    await exec('bash', [script, 'abra-pair/1/fixture'], { env });
+    assert.equal((await readFile(env.DOWNLOAD_LOG, 'utf8')).trim(), 'download');
+    assert.equal((await readFile(env.PAIR_LOG, 'utf8')).trim(), 'agent connect\nagent connect');
+    await rm(path.join(bin, 'abra-teleport'));
+    await writeFile(archive, 'corrupted');
+    await assert.rejects(exec('bash', [script, 'abra-pair/1/fixture'], { env }), /checksum mismatch/);
+    assert.equal((await readFile(env.PAIR_LOG, 'utf8')).trim(), 'agent connect\nagent connect');
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
