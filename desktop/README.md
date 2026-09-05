@@ -6,7 +6,7 @@ Use **Connect your agent** to create one command that installs the CLI if needed
 
 The app preserves existing cookie selection and device-bound-session exclusions. A received session runs in an isolated browser context. Abra reuses a compatible browser on the sandbox’s display, or starts a visible browser there; it falls back to headless only when no display is available.
 
-The header checks connection health every 15 seconds and shows the last successful contact time. Unreachable agents remain paired and can reconnect without setup.
+The Chrome tabs section switches between a list and cards. Cards show a capture of the tab when Chrome is showing it in a visible window; other tabs show the site icon. Captures go through the macOS window server, so the app needs Screen Recording permission. The header checks connection health every 15 seconds and shows the last successful contact time. Unreachable agents remain paired and can reconnect without setup.
 
 Source lives in `src/`, `electron/`, and `shared/` as TypeScript. The preload and renderer share one typed IPC contract. Install dependencies with `npm ci` from the repository root.
 
@@ -19,7 +19,7 @@ To look at the UI without a paired agent, build the web bundle and render a stat
 
 ```sh
 npx vite build
-npx electron scripts/screenshot.cjs out.png selected   # pick | selected | editing | cloud | multi | offline | unpaired | remote | popover | command
+npx electron scripts/screenshot.cjs out.png selected   # pick | selected | editing | list | cloud | multi | offline | unpaired | remote | popover | command
 ABRA_SHOT_LIGHT=1 npx electron scripts/screenshot.cjs out.png pick   # light theme
 ```
 

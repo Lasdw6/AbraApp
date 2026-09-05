@@ -1,5 +1,5 @@
 // Dev helper: renders dist-web with a fake bridge and saves PNGs.
-// Usage: npx vite build && npx electron scripts/screenshot.cjs out.png [pick|selected|editing|cloud|multi|offline|unpaired|remote|popover|command]
+// Usage: npx vite build && npx electron scripts/screenshot.cjs out.png [pick|selected|editing|list|cloud|multi|offline|unpaired|remote|popover|command]
 // Set ABRA_SHOT_LIGHT=1 to render the light theme.
 const path = require('node:path');
 const fs = require('node:fs');
@@ -33,8 +33,9 @@ app.whenReady().then(async () => {
     await win.webContents.executeJavaScript(`[...document.querySelectorAll(${JSON.stringify(selector)})].at(-1)?.click()`);
     await new Promise(r => setTimeout(r, 500));
   };
-  if (clickTab) await click('.row');
+  if (clickTab) await click('.tab-card');
   if (scenario === 'editing') await click('.send-summary .link');
+  if (scenario === 'list') { await click('.segmented button:first-child'); await click('.row'); }
   if (scenario === 'remote') await click('.remote-toggle');
   if (scenario === 'popover') await click('.agent-pill');
   if (scenario === 'command') { await click('.steps .primary'); await click('.command .actions button:first-child'); }

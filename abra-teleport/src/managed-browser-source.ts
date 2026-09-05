@@ -27,6 +27,29 @@ export async function managedTabs(wsUrl?: string) {
   } finally { cdp.close(); }
 }
 
+// Screenshot every page target. Background tabs may not paint, so a missing preview is not an error.
+export async function managedPreviews(wsUrl?: string) {
+  if (!wsUrl && !await chromeStatus()) return {};
+  const { cdp, attachPage } = await connect(wsUrl);
+  const previews: Record<string, string> = {};
+  try {
+    const targets = (await cdp.send('Target.getTargets')).targetInfos.filter(target => target.type === 'page' && /^https?:\/\//.test(target.url));
+    for (const target of targets) {
+      let session;
+      try {
+        session = await attachPage(cdp, target.targetId);
+        const shot = await Promise.race([
+          cdp.send('Page.captureScreenshot', { format: 'jpeg', quality: 60 }, session),
+          new Promise<never>((_, reject) => setTimeout(() => reject(new Error('screenshot timed out')), 3000))
+        ]);
+        previews[target.targetId] = `data:image/jpeg;base64,${shot.data}`;
+      } catch { /* leave this tab without a preview */ }
+      finally { if (session) await cdp.send('Target.detachFromTarget', { sessionId: session }).catch(() => {}); }
+    }
+  } finally { cdp.close(); }
+  return previews;
+}
+
 // Read only the selected target. Other tabs may hold different session storage,
 // even when they have the same URL and share cookies.
 export async function captureManagedTab(tabId, url, { includeStorage = true, metadataOnly = false, wsUrl = undefined as string | undefined } = {}) {

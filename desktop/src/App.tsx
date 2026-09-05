@@ -11,6 +11,7 @@ type LiveState = { available: boolean; reason?: string; scroll?: { x: number; y:
 type Inventory = { profile: string; domains: Domain[]; liveState?: LiveState };
 type RemoteTab = { id: string; title: string; url: string; host: string };
 type Incoming = { id: string; received_at: string };
+type Previews = { previews: Record<string, string>; reason?: string };
 // One short line of feedback, shown next to the thing the user just did.
 type Notice = { text: string; error?: boolean } | null;
 type Area = 'sessions' | 'tabs' | 'send' | 'remote';
@@ -33,13 +34,12 @@ async function local<T>(args: string[]): Promise<T> {
 }
 
 // Site icon fetched from the site itself, so tab hosts are not sent to a third-party icon service.
-function Favicon({ host, active }: { host: string; active?: boolean }) {
+function Favicon({ host, large }: { host: string; large?: boolean }) {
   const [failed, setFailed] = useState(false);
   useEffect(() => setFailed(false), [host]);
-  return <span className="icon" aria-hidden>
+  return <span className={`icon ${large ? 'large' : ''}`} aria-hidden>
     {failed || !host ? <span className="favicon fallback">{displayHost(host).charAt(0).toUpperCase()}</span>
       : <img className="favicon" src={`https://${host}/favicon.ico`} alt="" onError={() => setFailed(true)} />}
-    {active && <span className="mark active" title="Active tab" />}
   </span>;
 }
 
@@ -63,6 +63,10 @@ function Browser({ endpoint, profiles, initialTabs, connected, reload }: { endpo
   const [remoteOpen, setRemoteOpen] = useState(false);
   const [remoteTabs, setRemoteTabs] = useState<RemoteTab[]>([]);
   const [incoming, setIncoming] = useState<Incoming[]>([]);
+  const [view, setView] = useState<'list' | 'cards'>(() => localStorage.getItem('abra.tabView') === 'list' ? 'list' : 'cards');
+  const chooseView = (next: 'list' | 'cards') => { setView(next); localStorage.setItem('abra.tabView', next); };
+  const [previews, setPreviews] = useState<Record<string, string>>({});
+  const [previewNote, setPreviewNote] = useState('');
   const [notices, setNotices] = useState<Partial<Record<Area, Notice>>>({});
   const say = (area: Area, text: string, error = false) => setNotices({ [area]: { text, error } });
   const fail = (area: Area, error: unknown) => say(area, `Failed: ${message(error)}`, true);
@@ -82,6 +86,14 @@ function Browser({ endpoint, profiles, initialTabs, connected, reload }: { endpo
     return () => { cancelled = true; clearInterval(timer); };
   }, [busy]);
   useEffect(() => setTabs(initialTabs), [initialTabs]);
+  useEffect(() => {
+    if (!tabs.length || view !== 'cards') { setPreviews({}); setPreviewNote(''); return; }
+    let cancelled = false;
+    local<Previews | null>(['browser', 'tab-previews'])
+      .then(result => { if (!cancelled) { setPreviews(result?.previews || {}); setPreviewNote(result?.reason || ''); } })
+      .catch(error => { if (!cancelled) setPreviewNote(message(error)); });
+    return () => { cancelled = true; };
+  }, [tabs, view]);
   useEffect(() => { refreshSessions().catch(error => fail('sessions', error)); }, [endpoint.provider.id]);
   useEffect(() => {
     const first = profiles.find(item => item.directory !== 'active') || profiles[0];
@@ -183,7 +195,8 @@ function Browser({ endpoint, profiles, initialTabs, connected, reload }: { endpo
     if (live?.available) parts.push(live.media ? `playback at ${formatDuration(live.media.currentTime)}${live.media.paused ? ', paused' : ''}` : 'scroll position');
     return parts.join(' · ');
   };
-  const sendPanel = <div className="send">
+  const sendPanel = (inline: boolean) => selected && <div className={`send ${inline ? 'inline' : ''}`}>
+    {!inline && <div className="send-head"><Favicon host={selected.host} /><span className="title">{selected.title || selected.host}</span><span className="meta">{displayHost(selected.host)}</span></div>}
     {!inventory && busy && <p className="notice"><span className="spinner" />Reading site data…</p>}
     {inventory && <>
       <div className="send-summary"><span>{summary()}</span>{!protectedGoogleTab && <button className="link" disabled={busy} onClick={() => setEditing(!editing)}>{editing ? 'Done' : 'Edit'}</button>}</div>
@@ -230,20 +243,38 @@ function Browser({ endpoint, profiles, initialTabs, connected, reload }: { endpo
           {managed && <button disabled={busy} onClick={openAbraBrowser}>Open Abra browser</button>}
           {!managed && profileChoices.length > 1 && <select value={profile} disabled={busy} aria-label="Chrome profile for cookies" onChange={event => chooseProfile(event.target.value)}>{profileChoices.map(item => <option key={item.directory} value={item.directory}>{item.name}</option>)}</select>}
           <button disabled={busy} onClick={refreshTabs}>Refresh</button>
+          <span className="segmented" role="group" aria-label="Tab layout">
+            <button className={view === 'list' ? 'on' : ''} aria-pressed={view === 'list'} onClick={() => chooseView('list')}>List</button>
+            <button className={view === 'cards' ? 'on' : ''} aria-pressed={view === 'cards'} onClick={() => chooseView('cards')}>Cards</button>
+          </span>
         </span>
       </div>
       {tabs.length > 6 && <input type="search" className="search" value={search} onChange={event => setSearch(event.target.value)} placeholder="Search tabs" aria-label="Search tabs" />}
       <NoticeLine notice={notices.tabs} busy={busy} />
-      {visibleTabs.length > 0 ? <ul className="rows">{visibleTabs.map(tab => {
-        const open = selected?.id === tab.id;
-        return <li key={tab.id}>
-          <button className={`row ${open ? 'selected' : ''}`} disabled={busy && !open} aria-expanded={open} onClick={() => open ? clearSelection() : inspect(tab)}>
-            <Favicon host={tab.host} active={tab.active} /><span className="title">{tab.title || tab.host}</span><span className="meta">{displayHost(tab.host)}</span>
-          </button>
-          {open && sendPanel}
-        </li>;
-      })}</ul>
-        : <p className="empty">{tabs.length ? `No tabs match “${search}”.` : managed ? 'No tabs yet. Open the Abra browser, sign in, then refresh.' : 'No Chrome tabs found. Open Chrome with at least one tab, then refresh.'}</p>}
+      {view === 'cards' && sendPanel(false)}
+      {!visibleTabs.length ? <p className="empty">{tabs.length ? `No tabs match “${search}”.` : managed ? 'No tabs yet. Open the Abra browser, sign in, then refresh.' : 'No Chrome tabs found. Open Chrome with at least one tab, then refresh.'}</p>
+        : view === 'cards' ? <div className="tab-grid">{visibleTabs.map(tab => {
+          const open = selected?.id === tab.id;
+          return <button key={tab.id} className={`tab-card ${open ? 'selected' : ''}`} disabled={busy && !open} aria-pressed={open} onClick={() => open ? clearSelection() : inspect(tab)}>
+            <span className="preview">
+              {previews[tab.id] ? <img src={previews[tab.id]} alt="" /> : <Favicon host={tab.host} large />}
+              {tab.active && <span className="badge">Active</span>}
+            </span>
+            <span className="tab-card-text"><Favicon host={tab.host} /><span className="title">{tab.title || tab.host}</span></span>
+            <span className="meta">{displayHost(tab.host)}</span>
+          </button>;
+        })}</div>
+        : <ul className="rows">{visibleTabs.map(tab => {
+          const open = selected?.id === tab.id;
+          return <li key={tab.id}>
+            <button className={`row ${open ? 'selected' : ''}`} disabled={busy && !open} aria-expanded={open} onClick={() => open ? clearSelection() : inspect(tab)}>
+              <Favicon host={tab.host} /><span className="title">{tab.title || tab.host}</span>
+              {tab.active && <span className="dot online" title="Active tab" />}<span className="meta">{displayHost(tab.host)}</span>
+            </button>
+            {open && sendPanel(true)}
+          </li>;
+        })}</ul>}
+      {previewNote && <p className="muted">{previewNote}</p>}
     </section>
 
     <section>

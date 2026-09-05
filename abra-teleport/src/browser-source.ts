@@ -8,7 +8,7 @@ import { chromeStatus, ensureChrome, matchesBrowser } from './chrome.js';
 import { loadState } from './state.js';
 import { exists, run } from './util.js';
 
-import { captureManagedTab, managedTabs, usesManagedBrowser } from './managed-browser-source.js';
+import { captureManagedTab, managedPreviews, managedTabs, usesManagedBrowser } from './managed-browser-source.js';
 
 const chromeRoot = path.join(os.homedir(), 'Library', 'Application Support', 'Google', 'Chrome');
 const chromeBinary = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
@@ -123,6 +123,67 @@ function run(argv) {
   const javascript = 'JSON.stringify((()=>{const media=[...document.querySelectorAll("video,audio")].find(x=>!x.paused)||document.querySelector("video,audio");return {scroll:{x:scrollX,y:scrollY,historyLength:history.length},media:media?{currentTime:media.currentTime,paused:media.paused,playbackRate:media.playbackRate,volume:media.volume,muted:media.muted}:null}})())';
   return JSON.stringify({url: tab.url(), title: tab.title(), runtime: JSON.parse(tab.execute({javascript}))});
 }`;
+
+// Captures each Chrome window through the window server and reports which tab it was showing.
+// Chrome only paints web content for windows that are on screen, so covered or off-space windows come back blank.
+const chromeWindowCaptureScript = `
+ObjC.import('CoreGraphics'); ObjC.import('AppKit');
+function run(argv) {
+  const dir = argv[0];
+  const chrome = Application('Google Chrome');
+  if (!chrome.running()) return JSON.stringify({ windows: [], permission: true });
+  const cg = ObjC.deepUnwrap(ObjC.castRefToObject($.CGWindowListCopyWindowInfo(16, 0)))
+    .filter(w => w.kCGWindowOwnerName === 'Google Chrome' && w.kCGWindowLayer === 0);
+  const permission = cg.some(w => typeof w.kCGWindowName === 'string' && w.kCGWindowName.length > 0);
+  const near = (a, b) => Math.abs(a - b) < 2;
+  // Sample the page area. One flat colour means Chrome is not painting this window.
+  const flat = rep => {
+    const w = rep.pixelsWide, h = rep.pixelsHigh;
+    let min = [1, 1, 1], max = [0, 0, 0];
+    for (let i = 0; i < 8; i++) for (let j = 0; j < 8; j++) {
+      const c = rep.colorAtXY(Math.floor(w * (0.2 + 0.75 * i / 7)), Math.floor(h * (0.3 + 0.65 * j / 7)));
+      const parts = [c.redComponent, c.greenComponent, c.blueComponent];
+      min = min.map((v, k) => Math.min(v, parts[k])); max = max.map((v, k) => Math.max(v, parts[k]));
+    }
+    return max.every((v, k) => v - min[k] < 0.03);
+  };
+  let blank = 0;
+  const windows = [];
+  chrome.windows().forEach(window => {
+    if (window.minimized()) return;
+    const b = window.bounds();
+    const match = cg.find(w => near(w.kCGWindowBounds.X, b.x) && near(w.kCGWindowBounds.Y, b.y) && near(w.kCGWindowBounds.Width, b.width) && near(w.kCGWindowBounds.Height, b.height));
+    if (!match) return;
+    const rep = $.NSBitmapImageRep.alloc.initWithCGImage($.CGWindowListCreateImage($.CGRectNull, 8, match.kCGWindowNumber, 0));
+    if (rep.isNil()) return;
+    if (flat(rep)) { blank++; return; }
+    const data = rep.representationUsingTypeProperties($.NSBitmapImageFileTypeJPEG, $({ NSImageCompressionFactor: 0.7 }));
+    const file = dir + '/' + String(window.id()) + '.jpg';
+    if (!data.writeToFileAtomically(file, true)) return;
+    windows.push({ windowId: String(window.id()), tabIndex: window.activeTabIndex(), file });
+  });
+  return JSON.stringify({ windows, permission, blank });
+}`;
+
+export async function browserTabPreviews() {
+  if (usesManagedBrowser()) return { previews: await managedPreviews() };
+  if (process.platform !== 'darwin') return { previews: {}, reason: 'Tab previews are only available on macOS.' };
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'abra-teleport-previews-'));
+  try {
+    const { stdout } = await run('/usr/bin/osascript', ['-l', 'JavaScript', '-e', chromeWindowCaptureScript, '--', dir]);
+    const result = JSON.parse(stdout);
+    const previews = {};
+    for (const window of result.windows) {
+      await run('/usr/bin/sips', ['--resampleWidth', '640', window.file]).catch(() => {});
+      previews[`${window.windowId}:${window.tabIndex}`] = `data:image/jpeg;base64,${(await readFile(window.file)).toString('base64')}`;
+    }
+    if (!result.permission) return { previews, reason: 'Allow Screen Recording for Abra Teleport in System Settings to see tab previews.' };
+    if (result.blank && !result.windows.length) return { previews, reason: 'Previews appear for Chrome windows that are visible on screen.' };
+    return { previews };
+  } finally {
+    await rm(dir, { recursive: true, force: true }).catch(() => {});
+  }
+}
 
 export async function browserChromeTabs() {
   if (usesManagedBrowser()) return managedTabs();

@@ -2,7 +2,7 @@ import { browserSendTab, sandboxBrowserTabs } from './browser.js';
 import path from 'node:path';
 import { abra, abraBinary, browserAdapterDirectory, daemonStatus, ensureDaemon, stopDaemon } from './abra.js';
 import { browserClose, browserExec, browserPrepare, browserReceive, browserRevoke, browserSend, browserStatus } from './browser.js';
-import { browserChromeTabs, browserCookieInventory, browserInventory, browserProfiles, browserTabInventory } from './browser-source.js';
+import { browserChromeTabs, browserCookieInventory, browserInventory, browserProfiles, browserTabInventory, browserTabPreviews } from './browser-source.js';
 import { browserMode, ensureChrome } from './chrome.js';
 import { paths } from './paths.js';
 import { executableOnPath, parseArgs } from './util.js';
@@ -28,6 +28,7 @@ Setup and pairing
 Browser round trip
   abra-teleport browser profiles
   abra-teleport browser tabs
+  abra-teleport browser tab-previews
   abra-teleport browser cookie-inventory --profile Default --url https://example.com
   abra-teleport browser tab-inventory --profile Default --url https://example.com
   abra-teleport browser prepare --profile Default --url https://example.com --cookies <base64url-json>
@@ -72,7 +73,7 @@ async function doctor() {
 }
 
 export async function main(argv) {
-  const browserMutation = argv[0] === 'browser' && !['status', 'tabs', 'profiles'].includes(argv[1]);
+  const browserMutation = argv[0] === 'browser' && !['status', 'tabs', 'tab-previews', 'profiles'].includes(argv[1]);
   const sandboxMutation = argv[0] === 'sandbox' && !['status', 'connect', 'browser-incoming'].includes(argv[1]);
   if (browserMutation || sandboxMutation) {
     const { withBrowserLock } = await import('./browser-lock.js');
@@ -148,6 +149,7 @@ async function dispatch(argv) {
     if (action === 'send-tab') return output(await browserSendTab(need(rest[0], 'browser send-tab needs a tab id')));
     if (action === 'profiles') return output(await browserProfiles());
     if (action === 'tabs') return output(await browserChromeTabs());
+    if (action === 'tab-previews') return output(await browserTabPreviews());
     if (action === 'cookie-inventory') return output(await browserCookieInventory(need(flags.profile, 'browser cookie-inventory needs --profile'), need(flags.url, 'browser cookie-inventory needs --url'), flags.title, flags['tab-id']));
     if (action === 'tab-inventory') return output(await browserTabInventory(need(flags.profile, 'browser tab-inventory needs --profile'), need(flags.url, 'browser tab-inventory needs --url'), flags.title));
     if (action === 'prepare') return output(await browserPrepare(flags));
