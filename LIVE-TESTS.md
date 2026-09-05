@@ -38,6 +38,12 @@ Electron mock renders covered the multiple-session navigation and sandbox tab sc
 
 The Linux CI integration run failed on the initial Chrome debugging request before any transfer. Chrome had written its port file but the endpoint timed out. Preview 3 waits for the newly launched endpoint to become ready, with a regression test for delayed readiness and process exit. All 15 CLI tests and two desktop tests then passed locally, including browser integration; type checks and both package builds also passed.
 
+## Computer-use test: passed
+
+The actual Electron app ran against two isolated Abra identities with synthetic localhost tabs. Through the visible UI, two sessions were sent, the picker was reopened while a session remained active, one session was revoked, and the other was brought back. The agent CLI then sent its own tab; the incoming indicator appeared, Open on this computer accepted it, and the sandbox tab’s Pull button created another local copy. All three returned contexts preserved the expected synthetic cookie and localStorage values. The original sandbox tab and cookie remained intact. Stopping the isolated daemon changed the UI to Unreachable and disabled pulling; restarting it and using Check now restored Connected.
+
+The installed app also listed the real Grokbot tabs while preserving the existing X handoff. No real tabs were pulled or revoked. Selecting another session now clears a stale operation message that could otherwise still say Session revoked. Reports are in `/Users/vividh/Desktop/abra-test-results/ui-cHotuL/`. The full Linux CI run passed, including browser tests, PowerShell syntax, and the Windows WSL package build, after repairing missing optional Rollup platform entries in the lockfile.
+
 ## Earlier release tests
 
 The Codex features mentioned below have since been removed. These results describe the earlier release.

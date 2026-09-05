@@ -76,6 +76,7 @@ function Browser({ endpoint, profiles, initialTabs, connected, reload }: { endpo
     const url = new URL(session.url);
     setSelected({ id: 'restored', windowIndex: 0, tabIndex: 0, title: session.title, url: session.url, host: url.hostname, active: false });
     setSentCookieCount(session.cookie_count); setIncludeStorage(session.include_storage); setSessionId(session.id); setStage('cloud');
+    setStatus('Viewing the selected session.');
   };
   const refreshSessions = async () => {
     const result = await window.abra!.sandbox('status');
