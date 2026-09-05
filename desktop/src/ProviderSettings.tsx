@@ -18,7 +18,7 @@ export default function ProviderSettings({ onConnected }: { onConnected: () => P
   const generate = async () => {
     if (!window.abra) return;
     setBusy(true);
-    try { const ticket = await window.abra.agentTicket(); setCommand(ticket.command); setStatus(ticket.installs_cli ? 'Give this command to your agent. It installs the CLI if needed, then connects. The connection expires in 10 minutes.' : 'Run this in your agent’s sandbox after installing the CLI. It expires in 10 minutes.'); }
+    try { const ticket = await window.abra.agentTicket(); setCommand(ticket.command); setStatus(ticket.installs_cli ? 'Give this command to your agent. It installs the CLI if needed, then connects. This command expires in 10 minutes.' : 'Run this in your agent’s sandbox after installing the CLI. It expires in 10 minutes.'); }
     catch (error) { setStatus(error instanceof Error ? error.message : String(error)); }
     finally { setBusy(false); }
   };

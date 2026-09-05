@@ -10,6 +10,7 @@ import { abra, ensureDaemon, stopDaemon } from '../src/abra.js';
 import { agentTicket, listAgents, agentRemote } from '../src/agent.js';
 import { browserSend, browserReceive } from '../src/browser.js';
 import { codexSend, codexReceive } from '../src/codex.js';
+import { sandboxCommand } from '../src/sandbox.js';
 import { ensureChrome, stopChrome } from '../src/chrome.js';
 import { run, redact } from '../src/util.js';
 import { CDP, attachPage, evalValue, waitForLoad } from '../../abra/adapters/browser-session/lib/cdp.js';
@@ -63,7 +64,7 @@ try {
   } finally {cdp.close();}
   const sent = await browserSend(agent.peer_id,{domains:'127.0.0.1',headless:true,timeout:120000});
   await command(['browser','receive',sent.snapshot_id]);
-  const screenshot = await command(['browser','exec','--','node','browser-cloud-screenshot.js']);
+  const screenshot = await sandboxCommand('browser-frame', agent);
   await check('browser_preview',screenshot.title==='Teleport live fixture' && screenshot.image.length>1000);
   await writeFile(path.join(root,'browser-preview.jpg'),Buffer.from(screenshot.image,'base64'));
   await command(['browser','input',JSON.stringify({text:'remote typed'})]);

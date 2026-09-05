@@ -14,7 +14,7 @@ if (base) {
     .replace('@ARCHIVE_URL@', new URL('abra-teleport-agent.tar.gz', url).href.replaceAll("'", '%27'))
     .replace('@ARCHIVE_SHA256@', digest);
   await writeFile(path.join(output, 'connect.sh'), script, { mode: 0o755 });
-  await writeFile(path.join(output, 'install.json'), JSON.stringify({ install_url: new URL('connect.sh', url).href }, null, 2));
+  await writeFile(path.join(output, 'install.json'), JSON.stringify({ install_url: process.env.ABRA_TELEPORT_INSTALL_URL || 'https://abra.vividh.lol/install.sh' }, null, 2));
 } else {
   await writeFile(path.join(output, 'install.json'), '{}\n');
 }

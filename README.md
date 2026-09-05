@@ -2,6 +2,8 @@
 
 A desktop app for moving selected browser sessions and Codex workspaces between your laptop and an agent’s sandbox.
 
+The installer is served from `https://abra.vividh.lol/install.sh`.
+
 Open **Connect your agent**, create a connection command, and give it to your agent. The command downloads the CLI if it is missing, verifies the archive checksum, installs it under the sandbox user’s home, and pairs with your laptop. If the CLI is already installed, it just pairs. Commands expire after ten minutes; generate another if setup takes longer.
 
 The CLI and observer run inside the sandbox. The app does not need Daytona API keys, SSH keys, or Firecracker host access. Pairing establishes trusted Abra devices. The sandbox must be able to reach Abra’s network; provider network restrictions can block the connection.
@@ -31,3 +33,5 @@ ABRA_TELEPORT_INTEGRATION=1 ABRA_TELEPORT_BROWSER_INTEGRATION=1 npm test
 ```
 
 Integration tests use isolated Abra state and Chrome profiles. `abra-teleport/scripts/live-roundtrip.js` tests a live Linux guest with a JSON configuration containing `provider`, `report_dir`, `install_url`, and a `remote` SSH argument array. SSH only sets up test fixtures and checks their contents; pairing, control, and all handoffs use Abra’s iroh transport. Fixtures use synthetic browser state and a synthetic Codex transcript, not personal credentials or paid model calls.
+
+The `docs/` directory serves the installer through GitHub Pages at `abra.vividh.lol`. When publishing a release, copy its generated `connect.sh` to `docs/install.sh` so the hosted script and release archive have matching checksums.
