@@ -1,5 +1,6 @@
 // Dev helper: renders dist-web with a fake bridge and saves PNGs.
-// Usage: npx vite build && npx electron scripts/screenshot.cjs out.png [pick|selected|cloud|offline|unpaired|popover|command]
+// Usage: npx vite build && npx electron scripts/screenshot.cjs out.png [pick|selected|editing|cloud|multi|offline|unpaired|remote|popover|command]
+// Set ABRA_SHOT_LIGHT=1 to render the light theme.
 const path = require('node:path');
 const fs = require('node:fs');
 
@@ -13,15 +14,17 @@ if (process.env.ELECTRON_RUN_AS_NODE) {
   process.exit(result.status ?? 1);
 }
 
-const { app, BrowserWindow } = require('electron');
+const { app, BrowserWindow, nativeTheme } = require('electron');
 
 const out = process.argv[2] || 'screenshot.png';
 const scenario = process.argv[3] || 'pick';
-const clickTab = scenario === 'selected';
+const clickTab = scenario === 'selected' || scenario === 'editing';
+const light = Boolean(process.env.ABRA_SHOT_LIGHT);
+if (light) nativeTheme.themeSource = 'light';
 
 app.whenReady().then(async () => {
   const win = new BrowserWindow({
-    width: 1320, height: 880, show: false, backgroundColor: '#0b0d12',
+    width: 900, height: 640, show: false, backgroundColor: light ? '#ffffff' : '#171717',
     webPreferences: { preload: path.join(__dirname, 'screenshot-mock.cjs'), contextIsolation: true, sandbox: true, additionalArguments: [`--abra-shot=${scenario}`] },
   });
   await win.loadFile(path.join(__dirname, '..', 'dist-web', 'index.html'));
@@ -30,10 +33,11 @@ app.whenReady().then(async () => {
     await win.webContents.executeJavaScript(`[...document.querySelectorAll(${JSON.stringify(selector)})].at(-1)?.click()`);
     await new Promise(r => setTimeout(r, 500));
   };
-  if (clickTab) await click('.tab-card');
-  if (scenario === 'remote') await click('.browser-navigation button:nth-child(2)');
+  if (clickTab) await click('.row');
+  if (scenario === 'editing') await click('.send-summary .link');
+  if (scenario === 'remote') await click('.remote-toggle');
   if (scenario === 'popover') await click('.agent-pill');
-  if (scenario === 'command') { await click('.steps .primary'); await click('.steps .secondary'); }
+  if (scenario === 'command') { await click('.steps .primary'); await click('.command .actions button:first-child'); }
   const image = await win.webContents.capturePage();
   fs.writeFileSync(out, image.toPNG());
   app.quit();

@@ -19,7 +19,8 @@ To look at the UI without a paired agent, build the web bundle and render a stat
 
 ```sh
 npx vite build
-npx electron scripts/screenshot.cjs out.png selected   # pick | selected | cloud | offline | unpaired | popover | command
+npx electron scripts/screenshot.cjs out.png selected   # pick | selected | editing | cloud | multi | offline | unpaired | remote | popover | command
+ABRA_SHOT_LIGHT=1 npx electron scripts/screenshot.cjs out.png pick   # light theme
 ```
 
 The build refreshes the embedded Abra binary, wrapper, browser adapter, shared adapter runtime, observer, and CLI installer. Build output is under `dist/mac-arm64/Abra Teleport.app` on Apple Silicon.

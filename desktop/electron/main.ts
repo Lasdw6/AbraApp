@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, nativeTheme } from 'electron';
 import { spawn } from 'node:child_process';
 import { copyFile } from 'node:fs/promises';
 import * as path from 'node:path';
@@ -88,13 +88,13 @@ async function local(args: string[]) {
 ipcMain.handle('abra:local', (_event, args) => local(args));
 function createWindow() {
   const window = new BrowserWindow({
-    width: 1320,
-    height: 880,
-    minWidth: 1060,
-    minHeight: 720,
+    width: 900,
+    height: 640,
+    minWidth: 640,
+    minHeight: 420,
     title: 'Abra Teleport',
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
-    backgroundColor: '#0b0d12',
+    backgroundColor: nativeTheme.shouldUseDarkColors ? '#171717' : '#ffffff',
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
