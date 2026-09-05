@@ -1,5 +1,6 @@
 import { readFile, readdir, stat } from 'node:fs/promises';
 import path from 'node:path';
+import { setTimeout as delay } from 'node:timers/promises';
 
 export function localBrowserUrl(value: string) {
   const url = new URL(value);
@@ -20,6 +21,18 @@ export async function browserEndpoint(value: string) {
   if (ws.protocol !== 'ws:' || ws.host !== url.host || !ws.pathname.startsWith('/devtools/browser/')) throw new Error('Chrome returned a different browser debugging endpoint');
   if (url.protocol === 'ws:' && ws.href !== url.href) throw new Error('The sandbox browser has restarted');
   return { wsUrl: ws.href, headless: String(body.Browser).startsWith('HeadlessChrome/') };
+}
+
+export async function waitForBrowser(value: string, alive: () => Promise<boolean>, timeout = 15000) {
+  const deadline = Date.now() + timeout;
+  let lastError: unknown;
+  do {
+    if (!await alive()) throw new Error('Chrome exited before its debugging endpoint was ready.');
+    try { return await browserEndpoint(value); }
+    catch (error) { lastError = error; }
+    await delay(50);
+  } while (Date.now() < deadline);
+  throw new Error(`Chrome debugging endpoint did not become ready: ${String(lastError)}`);
 }
 
 export async function browserCandidates({ procRoot = '/proc', platform = process.platform, env = process.env } = {}) {

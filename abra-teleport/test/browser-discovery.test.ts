@@ -5,7 +5,7 @@ import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { browserCandidates, browserEndpoint, desktopEnvironment, localBrowserUrl } from '../build/src/browser-discovery.js';
+import { browserCandidates, browserEndpoint, desktopEnvironment, localBrowserUrl, waitForBrowser } from '../build/src/browser-discovery.js';
 import { browserMode, matchesBrowser } from '../build/src/chrome.js';
 
 test('automatic browser mode uses the sandbox desktop and falls back when absent', async () => {
@@ -49,6 +49,22 @@ test('browser attachment stays local and rejects changed browser identities', as
   } finally { await new Promise<void>(resolve => server.close(() => resolve())); }
 });
 
+
+test('Chrome startup waits for its debugging endpoint and stops when the process exits', async () => {
+  let attempts = 0;
+  let reported = '';
+  const server = http.createServer((_req, res) => {
+    if (++attempts < 3) { res.writeHead(503); res.end(); return; }
+    res.end(JSON.stringify({ Browser: 'Chrome/151', webSocketDebuggerUrl: reported }));
+  });
+  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+  try {
+    const base = `127.0.0.1:${(server.address() as net.AddressInfo).port}`;
+    reported = `ws://${base}/devtools/browser/ready`;
+    assert.equal((await waitForBrowser(`http://${base}`, async () => true)).wsUrl, reported);
+    await assert.rejects(waitForBrowser(`http://${base}`, async () => false), /Chrome exited/);
+  } finally { await new Promise<void>(resolve => server.close(() => resolve())); }
+});
 
 test('discovery selects Chrome on the agent display and ignores other agents and headless processes', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'abra-processes-'));

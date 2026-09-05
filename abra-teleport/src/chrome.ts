@@ -3,7 +3,7 @@ import { readFile, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { paths } from './paths.js';
-import { browserCandidates, browserEndpoint, desktopEnvironment } from './browser-discovery.js';
+import { browserCandidates, browserEndpoint, desktopEnvironment, waitForBrowser } from './browser-discovery.js';
 import { executableOnPath, exists, isProcessAlive, processIdentity, readJson, secureDir, sleep, writeJson } from './util.js';
 
 async function chromeBinary() {
@@ -109,9 +109,11 @@ export async function ensureChrome({ headless, proxy, reuse = true }: { headless
     await sleep(50);
   }
   if (!port) throw new Error(`Chrome did not expose a debugging port. See ${logPath}`);
+  // Chrome can write DevToolsActivePort before its HTTP endpoint is ready.
+  const { wsUrl } = await waitForBrowser(`http://127.0.0.1:${port}`, () => isProcessAlive(child.pid));
   const identity = await processIdentity(child.pid);
   if (!identity) throw new Error('Chrome exited before startup.');
-  const state = { owned: true, pid: child.pid, binary, port, profile: paths().chromeProfile, headless, proxy: requestedProxy, started_at: identity.started_at, wsUrl: await endpoint(port) };
+  const state = { owned: true, pid: child.pid, binary, port, profile: paths().chromeProfile, headless, proxy: requestedProxy, started_at: identity.started_at, wsUrl };
   await writeJson(paths().chromeState, state);
   return { ...state, started: true };
 }

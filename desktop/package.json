@@ -1,6 +1,6 @@
 {
   "name": "@abra/desktop",
-  "version": "0.3.0-rc.2",
+  "version": "0.3.0-rc.3",
   "private": true,
   "main": "build-electron/electron/main.js",
   "scripts": {

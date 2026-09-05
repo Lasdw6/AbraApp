@@ -8,8 +8,8 @@ if [[ -z "$CLI" && -x "${ABRA_TELEPORT_BIN_DIR:-$HOME/.local/bin}/abra-teleport"
   CLI="${ABRA_TELEPORT_BIN_DIR:-$HOME/.local/bin}/abra-teleport"
 fi
 if [[ -z "$CLI" ]] || ! "$CLI" --help | grep -q 'agent connect'; then
-  ARCHIVE_URL='https://github.com/Lasdw6/AbraApp/releases/download/v0.3.0-rc.2/abra-teleport-agent.tar.gz'
-  EXPECTED='fff77ce88332eb20edc2ed0cec74c16ffdc24df4598e0be432ad6e9cbe16cf53'
+  ARCHIVE_URL='https://github.com/Lasdw6/AbraApp/releases/download/v0.3.0-rc.3/abra-teleport-agent.tar.gz'
+  EXPECTED='a300d12737c2c5a410d167d7436f3f7a53015668bc0c492368f03c841ef01193'
   [[ "$ARCHIVE_URL" == https://* && "$EXPECTED" =~ ^[a-f0-9]{64}$ ]] || { echo 'This installer has not been packaged for download.' >&2; exit 1; }
   STAGE="$(mktemp -d)"
   trap 'rm -rf "$STAGE"' EXIT

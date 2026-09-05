@@ -6,7 +6,7 @@ Abra Teleport can run as a desktop window on Windows through WSL 2 and WSLg. Thi
 
 Requires Intel/AMD 64-bit Windows 11 or Windows 10 build 19044+, hardware virtualization, and internet access. The setup uses Ubuntu 24.04. Windows ARM is not packaged yet.
 
-1. [Download the Windows setup](https://github.com/Lasdw6/AbraApp/releases/download/v0.3.0-rc.2/Abra-Teleport-Windows-WSL-x64.zip), then extract `Abra-Teleport-Windows-WSL-x64.zip` into a local folder. Keep all extracted files together.
+1. [Download the Windows setup](https://github.com/Lasdw6/AbraApp/releases/download/v0.3.0-rc.3/Abra-Teleport-Windows-WSL-x64.zip), then extract `Abra-Teleport-Windows-WSL-x64.zip` into a local folder. Keep all extracted files together.
 2. Open PowerShell in the extracted `Abra-Teleport-Windows-WSL` folder and run:
 
    ```powershell

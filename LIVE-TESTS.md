@@ -32,7 +32,11 @@ The 13 CLI tests and two desktop startup tests passed, including live-browser in
 
 The browser integration test now sends two independent sessions, rejects ambiguous return/revoke requests, revokes one without affecting the other, and returns the remaining session. It also lists and pulls a sandbox tab, receives a tab sent by the agent CLI, and verifies synthetic cookies and storage while preserving the original provider tab. A cross-process test verifies serialization of concurrent browser operations and recovery after a killed CLI. All 14 CLI tests and two desktop tests passed across the final suite and targeted lock test.
 
-Electron mock renders covered the multiple-session navigation and sandbox tab screen, including incoming tabs. The installed Mac app was updated and verified connected with the existing X handoff preserved; Send another tab reopened the picker without ending that handoff. Type checks and the Mac and Windows/WSL builds passed. The new flows have not yet been tested in the live Grokbot sandbox, which needs the updated agent CLI. The Windows package still needs first-run testing on Windows.
+Electron mock renders covered the multiple-session navigation and sandbox tab screen, including incoming tabs. The installed Mac app was updated and verified connected with the existing X handoff preserved; Send another tab reopened the picker without ending that handoff. Type checks and the Mac and Windows/WSL builds passed. Grokbot’s installed CLI was then updated to preview 2. A live read-only check confirmed multiple-session support, preserved the active handoff, and listed two tabs across two sandbox Chrome instances. The new pull/send flows have integration coverage but have not been exercised against those personal live tabs. The Windows package still needs first-run testing on Windows.
+
+## Linux Chrome startup follow-up
+
+The Linux CI integration run failed on the initial Chrome debugging request before any transfer. Chrome had written its port file but the endpoint timed out. Preview 3 waits for the newly launched endpoint to become ready, with a regression test for delayed readiness and process exit. All 15 CLI tests and two desktop tests then passed locally, including browser integration; type checks and both package builds also passed.
 
 ## Earlier release tests
 
