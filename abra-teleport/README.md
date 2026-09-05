@@ -29,11 +29,14 @@ On Linux, a one-shot internal observer records processes, runtimes, resources, a
 
 ## Agent installation
 
-Linux and macOS on x86_64 or arm64 are supported by the installer. It installs under the current user’s home without sudo. The archive includes Abra source and the builder’s native binary. On another platform it installs Rust 1.91 and builds the included source; this needs a compiler/linker and internet access to Rust dependencies. Node 22 is downloaded with a checksum check if a suitable Node is absent. Python 3 is required for Linux observation. Browser handoffs need Chrome/Chromium; sandbox-managed Linux Chrome uses the surrounding sandbox for isolation.
+Linux and macOS on x86_64 or arm64 are supported by the installer. It installs under the current user’s home without sudo. The archive includes Abra source and the builder’s native binary. On another platform it installs Rust 1.91 and builds the included source; this needs a compiler/linker and internet access to Rust dependencies. Node 22 is downloaded with a checksum check if a suitable Node is absent. Python 3 is required for Codex writer locks and Linux observation. Browser handoffs need Chrome/Chromium; sandbox-managed Linux Chrome uses the surrounding sandbox for isolation.
 
 The installer is distributed through versioned AbraApp GitHub Releases. The bootstrap checks the archive SHA-256 before extracting it. Published Linux x64 builds include a static Abra binary.
 
 ## Build and test
+
+Run `npm ci` from the repository root. The CLI, adapters, and tests are TypeScript; `npm run build` compiles runtime files into `build/` and copies adapter manifests and shell installers. Run the development CLI with `node build/bin/abra-teleport.js`. Packaged installations contain only the compiled runtime and do not need TypeScript or npm dependencies.
+
 
 The Electron app lives in the sibling `desktop` directory. Its `npm run desktop:build` rebuilds Abra, prepares the agent installer, and bundles the current wrapper, browser adapter, shared adapter runtime, and observer.
 

@@ -1,0 +1,20 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "rootDir": ".",
+    "outDir": "build-electron",
+    "strict": true,
+    "noImplicitAny": true,
+    "useUnknownInCatchVariables": false,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "declaration": false,
+    "noEmitOnError": true
+  },
+  "include": [
+    "electron/**/*.ts",
+    "scripts/**/*.ts"
+  ]
+}

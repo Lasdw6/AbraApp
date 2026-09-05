@@ -6,6 +6,8 @@ Use **Connect your agent** to create one command that installs the CLI if needed
 
 The app preserves existing cookie selection, device-bound-session exclusions, and workspace divergence checks. A received browser runs in an isolated profile. Codex needs its own installation and login inside the sandbox.
 
+Source lives in `src/`, `electron/`, and `shared/` as TypeScript. The preload and renderer share one typed IPC contract. Install dependencies with `npm ci` from the repository root.
+
 ```sh
 npm run typecheck
 npm run desktop:build

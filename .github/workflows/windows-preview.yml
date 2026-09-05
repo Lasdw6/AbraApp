@@ -1,0 +1,48 @@
+name: Windows WSL preview
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.23.2'
+          cache: npm
+          cache-dependency-path: package-lock.json
+      - name: Build Linux core
+        run: |
+          rustup toolchain install 1.91.0 --profile minimal
+          cargo +1.91.0 build --locked --release --manifest-path abra/Cargo.toml -p abra-cli
+      - run: npm ci
+      - run: npm install --global @openai/codex@0.153.4
+      - name: Test pairing, workspaces, and real Chrome captures
+        env:
+          ABRA_TELEPORT_INTEGRATION: '1'
+          ABRA_TELEPORT_BROWSER_INTEGRATION: '1'
+          ABRA_BIN: ${{ github.workspace }}/abra/target/release/abra
+          CHROME_BIN: /usr/bin/google-chrome
+        run: npm test
+      - name: Check installer syntax
+        shell: pwsh
+        run: |
+          $tokens = $null
+          $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile("$PWD/scripts/Setup-Windows.ps1", [ref]$tokens, [ref]$errors) > $null
+          if ($errors.Count) { $errors | Format-List; exit 1 }
+          bash -n scripts/install-wsl.sh scripts/launch-wsl.sh
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - run: npm run build:windows
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Abra-Teleport-Windows-WSL-x64
+          path: desktop/dist/Abra-Teleport-Windows-WSL-x64.zip
+          if-no-files-found: error

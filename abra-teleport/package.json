@@ -1,26 +1,21 @@
 {
-  "name": "abra-teleport",
+  "name": "@abra/teleport",
   "version": "0.2.0",
   "private": true,
   "type": "module",
   "bin": {
-    "abra-teleport": "bin/abra-teleport.js"
+    "abra-teleport": "build/bin/abra-teleport.js"
   },
   "scripts": {
-    "check": "find bin src adapters -name '*.js' -type f -print0 | xargs -0 -n1 node --check",
-    "demo:local": "ABRA_TELEPORT_INTEGRATION=1 ABRA_TELEPORT_BROWSER_INTEGRATION=1 node --test test/abra-integration.test.js test/browser-integration.test.js",
-    "test": "node --test",
+    "build": "tsx ../scripts/build-cli.ts",
+    "check": "tsc --noEmit && tsc -p tsconfig.test.json",
+    "test": "npm run build && tsx --test test/*.test.ts",
     "package:agent": "bash scripts/package-agent.sh"
   },
   "engines": {
     "node": ">=22"
   },
   "files": [
-    "bin",
-    "src",
-    "adapters",
-    "scripts",
-    "systemd",
-    "README.md"
+    "build"
   ]
 }

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import ProviderSettings from './ProviderSettings';
 import SandboxPreview from './SandboxPreview';
 
-type Endpoint = { abra_peer_id: string; local_peer_id: string; provider?: ProviderConfig };
+type Endpoint = { provider: ProviderConfig };
 type Profile = { directory: string; name: string; account?: string | null; lastUsed?: boolean };
 type Tab = { id: string; windowIndex: number; tabIndex: number; title: string; url: string; host: string; active: boolean };
 type Cookie = { key: string; name: string; domain: string; path: string; httpOnly: boolean; secure: boolean; sameSite?: string | null; session: boolean };
@@ -17,24 +17,11 @@ type AppInspection = { workspace: string; recipes: AppRecipe[]; selected: AppRec
 type LocalApp = { active: boolean; url: string; port: number; workspace: string; command: string[]; output: string };
 type Frame = { title: string; url: string; image: string; githubSignedIn?: boolean | null; vercelSignedIn?: boolean | null };
 
-const cloudScreenshot = '/usr/lib/node_modules/abra-teleport/scripts/browser-cloud-screenshot.js';
-const cloudAction = '/usr/lib/node_modules/abra-teleport/scripts/browser-cloud-action.js';
 
 function parseJSON<T>(raw: string): T { return JSON.parse(raw) as T; }
 function parseLine<T>(raw: string, match: (value: unknown) => boolean): T {
   for (const line of raw.split('\n')) {
     try { const value = JSON.parse(line); if (match(value)) return value as T; } catch { /* next line */ }
-  }
-  throw new Error('The cloud returned an unreadable response.');
-}
-function parseTrailingJSON<T>(raw: string, match: (value: unknown) => boolean): T {
-  let start = raw.lastIndexOf('{');
-  while (start >= 0) {
-    try {
-      const value = JSON.parse(raw.slice(start).trim());
-      if (match(value)) return value as T;
-    } catch { /* try the previous object */ }
-    start = raw.lastIndexOf('{', start - 1);
   }
   throw new Error('The cloud returned an unreadable response.');
 }
@@ -55,12 +42,6 @@ async function local<T>(args: string[]): Promise<T> {
   if (!window.abra) throw new Error('Open the installed Abra Teleport desktop app.');
   return parseJSON<T>(await window.abra.local(args));
 }
-async function remote<T>(args: string[]): Promise<T> {
-  if (!window.abra) throw new Error('Open the installed Abra Teleport desktop app.');
-  return parseJSON<T>(await window.abra.remote(args));
-}
-async function ignore(task: Promise<unknown>) { try { await task; } catch { /* cleanup is best effort */ } }
-
 function Check({ checked }: { checked: boolean }) {
   return <span className={`check ${checked ? 'checked' : ''}`}>{checked ? '✓' : ''}</span>;
 }
@@ -77,18 +58,16 @@ function Header({ mode, setMode, connected, refresh }: { mode: string; setMode: 
 
 function Browser({ endpoint, profiles, initialTabs, connected, reload }: { endpoint: Endpoint | null; profiles: Profile[]; initialTabs: Tab[]; connected: boolean; reload: () => Promise<Tab[]> }) {
   const [tabs, setTabs] = useState(initialTabs);
-  const [profile, setProfile] = useState(profiles.find(item => item.directory !== 'active')?.directory || '');
+  const managed = profiles.length === 1 && profiles[0].directory === 'active';
+  const [profile, setProfile] = useState(profiles.find(item => item.directory !== 'active')?.directory || profiles[0]?.directory || '');
   const [selected, setSelected] = useState<Tab | null>(null);
   const [inventory, setInventory] = useState<Inventory | null>(null);
   const [cookieKeys, setCookieKeys] = useState<Set<string>>(new Set());
   const [includeStorage, setIncludeStorage] = useState(true);
-  const [routeThroughMac, setRouteThroughMac] = useState(false);
-  const [routeActive, setRouteActive] = useState(false);
   const [search, setSearch] = useState('');
   const [stage, setStage] = useState<'pick' | 'cloud'>('pick');
   const [frame, setFrame] = useState<Frame | null>(null);
   const [sentCookieCount, setSentCookieCount] = useState(0);
-  const [desktopUrl, setDesktopUrl] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState('Pick a tab.');
   const [activity, setActivity] = useState<string[]>([]);
@@ -105,7 +84,7 @@ function Browser({ endpoint, profiles, initialTabs, connected, reload }: { endpo
     }).catch(error => setStatus(message(error)));
   }, [endpoint?.provider?.id]);
   useEffect(() => {
-    const first = profiles.find(item => item.directory !== 'active');
+    const first = profiles.find(item => item.directory !== 'active') || profiles[0];
     if (first && (!profile || !profiles.some(item => item.directory === profile))) setProfile(first.directory);
   }, [profiles, profile]);
 
@@ -141,7 +120,7 @@ function Browser({ endpoint, profiles, initialTabs, connected, reload }: { endpo
   const refreshFrame = useCallback(async () => {
     if (stage !== 'cloud' || !window.abra) return;
     try {
-      const raw = endpoint?.provider ? JSON.stringify(await window.abra.sandbox('browser-frame')) : await window.abra.remote(['browser', 'exec', '--', 'node', cloudScreenshot]);
+      const raw = JSON.stringify(await window.abra.sandbox('browser-frame'));
       const next = parseLine<Frame>(raw, value => Boolean(value && typeof value === 'object' && 'image' in value));
       setFrame(next);
       if (selected && isGitHub(selected.host) && next.githubSignedIn === false) {
@@ -162,79 +141,18 @@ function Browser({ endpoint, profiles, initialTabs, connected, reload }: { endpo
   const send = async () => {
     if (!endpoint || !selected || !inventory) return;
     setBusy(true); setActivity([]);
-    let startedRoute = false;
-    let startedDesktop = false;
     try {
       log('Preparing the selected tab and cookies…');
       if (!window.abra) throw new Error('Open the installed Abra Teleport desktop app.');
-      if (endpoint.provider) {
-        const encoded = btoa(JSON.stringify([...cookieKeys].sort()));
-        const prepared = await window.abra.sandbox('browser-up', {
-          profile, url: selected.url, title: selected.title, 'tab-id': selected.id, cookies: encoded,
-          ...(!protectedGoogleTab && cookieKeys.size === cookies.length ? { 'all-cookies': true } : {}),
-          ...(!includeStorage || protectedGoogleTab ? { 'no-storage': true } : {}),
-        });
-        setSentCookieCount(prepared.cookie_count); setStage('cloud'); setFrame(null);
-        log('Live in the sandbox.'); return;
-      }
-      await ignore(window.abra.egressStop());
-      await ignore(window.abra.novncStop());
-      await ignore(remote(['browser', 'revoke'])); await ignore(remote(['browser', 'close', '--force']));
-      await ignore(local(['browser', 'revoke'])); await ignore(local(['browser', 'close', '--force']));
-      let proxyUrl: string | null = null;
-      if (routeThroughMac) {
-        log('Opening a protected route through this Mac…');
-        const route = await window.abra.egressStart();
-        proxyUrl = route.proxyUrl;
-        startedRoute = true;
-        setRouteActive(true);
-      }
       const encoded = btoa(JSON.stringify([...cookieKeys].sort()));
-      const args = ['browser', 'prepare', '--profile', profile, '--url', selected.url, '--title', selected.title, '--tab-id', selected.id, '--cookies', encoded];
-      if (!protectedGoogleTab && cookieKeys.size === cookies.length) args.push('--all-cookies');
-      if (!includeStorage || protectedGoogleTab) args.push('--no-storage');
-      const prepared = await local<{ cookie_count: number; omitted_cookie_count: number }>(args);
-      setSentCookieCount(prepared.cookie_count);
-      if (prepared.omitted_cookie_count) log(`Skipped ${prepared.omitted_cookie_count} device-bound cookies.`);
-      log('Sending the tab to the cloud…');
-      const sent = await local<{ snapshot_id: string }>(['browser', 'up', endpoint.abra_peer_id, '--all-domains']);
-      await local(['browser', 'revoke']); await ignore(local(['browser', 'close', '--force']));
-      log('Connecting to the sandbox desktop…');
-      const desktop = await window.abra.novncStart();
-      setDesktopUrl(desktop.url);
-      startedDesktop = true;
-      log('Opening the page in the cloud browser…');
-      const receiveArgs = ['browser', 'receive', sent.snapshot_id, '--headed'];
-      if (proxyUrl) receiveArgs.push('--proxy', proxyUrl);
-      try { await remote(receiveArgs); }
-      catch {
-        log('The sandbox browser is still starting. Retrying…');
-        await new Promise(resolve => window.setTimeout(resolve, 1000));
-        await remote(receiveArgs);
-      }
-      setStage('cloud'); setFrame(null); log('Live in the cloud.');
-    } catch (error) {
-      if (startedRoute && window.abra) await ignore(window.abra.egressStop());
-      if (startedDesktop && window.abra) await ignore(window.abra.novncStop());
-      setRouteActive(false);
-      setDesktopUrl(null);
-      log(`Failed: ${message(error)}`);
-    }
-    finally { setBusy(false); }
-  };
-
-  const runAction = async () => {
-    if (!selected) return;
-    setBusy(true);
-    try {
-      log('The cloud agent is changing the page…');
-      if (!window.abra) throw new Error('Open the installed Abra Teleport desktop app.');
-      const raw = endpoint?.provider ? JSON.stringify(await window.abra.sandbox('browser-action', { domain: selected.host })) : await window.abra.remote(['browser', 'exec', '--', 'node', cloudAction, selected.host]);
-      parseLine(raw, value => Boolean(value && typeof value === 'object' && 'changed' in value));
-      log('Cloud action finished.');
-      await refreshFrame();
-    }
-    catch (error) { log(`Failed: ${message(error)}`); }
+      const prepared = await window.abra.sandbox('browser-up', {
+        profile, url: selected.url, title: selected.title, 'tab-id': selected.id, cookies: encoded,
+        ...(!protectedGoogleTab && cookieKeys.size === cookies.length ? { 'all-cookies': true } : {}),
+        ...(!includeStorage || protectedGoogleTab ? { 'no-storage': true } : {}),
+      });
+      setSentCookieCount(prepared.cookie_count); setStage('cloud'); setFrame(null);
+      log('Live in the sandbox.');
+    } catch (error) { log(`Failed: ${message(error)}`); }
     finally { setBusy(false); }
   };
 
@@ -242,51 +160,44 @@ function Browser({ endpoint, profiles, initialTabs, connected, reload }: { endpo
     if (!endpoint) return;
     setBusy(true);
     try {
-      log('Sending the live browser back to this Mac…');
-      if (endpoint.provider) {
-        await window.abra?.sandbox('browser-down');
-        setStage('pick'); setFrame(null); log('Returned. The updated tab is open on this Mac.'); return;
-      }
-      const returned = await remote<{ snapshot_id: string }>(['browser', 'down', endpoint.local_peer_id, '--all-domains']);
-      await remote(['browser', 'revoke']);
-      await ignore(remote(['browser', 'close', '--force']));
-      await ignore(local(['browser', 'revoke'])); await ignore(local(['browser', 'close', '--force']));
-      await local(['browser', 'receive', returned.snapshot_id]);
-      if (routeActive && window.abra) await ignore(window.abra.egressStop());
-      if (window.abra) await ignore(window.abra.novncStop());
-      setRouteActive(false);
-      setStage('pick'); setFrame(null); setDesktopUrl(null); log('Returned. The updated tab is open on this Mac.');
+      log('Sending the live browser back to this computer…');
+      await window.abra?.sandbox('browser-down');
+      setStage('pick'); setFrame(null); setTabs(await reload());
+      log('Returned. The updated tab is open on this computer.');
     } catch (error) { log(`Failed: ${message(error)}`); }
     finally { setBusy(false); }
   };
 
   if (stage === 'cloud') return <section className="browser-cloud">
     <main className="preview-panel">
-      <div className="preview-heading"><div><h2>{frame?.title || selected?.title || 'Cloud browser'}</h2><p>{frame?.url || selected?.url}</p></div><div className="preview-actions"><button className="secondary" hidden={Boolean(endpoint?.provider)} disabled={!desktopUrl} onClick={() => void window.abra?.novncOpen()}>Open separate window</button><span className="live"><span className="dot online" />{endpoint?.provider ? 'SANDBOX' : 'INTERACTIVE'}</span></div></div>
-      <div className="preview">{endpoint?.provider ? <SandboxPreview image={frame?.image} refresh={refreshFrame} report={log} /> : desktopUrl ? <iframe src={desktopUrl} title="Interactive sandbox desktop" allow="clipboard-read; clipboard-write" /> : <div className="preview-wait"><span className="spinner" />Connecting to the sandbox desktop…</div>}</div>
+      <div className="preview-heading"><div><h2>{frame?.title || selected?.title || 'Cloud browser'}</h2><p>{frame?.url || selected?.url}</p></div><div className="preview-actions"><span className="live"><span className="dot online" />SANDBOX</span></div></div>
+      <div className="preview"><SandboxPreview image={frame?.image} refresh={refreshFrame} report={log} /></div>
       <p className="hint">Click the browser preview to interact. Refresh to see changes made by your agent.</p>
     </main>
     <aside className="cloud-controls">
       <div><span className="eyebrow">IN THE CLOUD</span><h2>{selected?.host}</h2><p>{sentCookieCount} cookies sent</p><p>{includeStorage && !protectedGoogleTab ? 'Site storage included' : 'No site storage'}</p></div>
-      {routeActive && <div className="route-live"><span className="dot online" /><div><strong>Using this Mac’s network</strong><small>Keep this Mac awake and online.</small></div></div>}
       {selected && isGitHub(selected.host) && frame?.githubSignedIn === false && <div className="warning">GitHub rejected this session. Bring it back, then retry with the recent Chrome profile and every cookie marked “Login session.”</div>}
       {selected && isVercel(selected.host) && frame?.vercelSignedIn === false && <div className="warning">Vercel rejected this session. Bring it back, refresh the cookies, and select every cookie marked “Login session.”</div>}
-      {selected && isGoogleOrYouTube(selected.host) && <div className="warning">Google and YouTube account login is intentionally not moved. Replaying those login cookies can invalidate the session on this Mac.</div>}
+      {selected && isGoogleOrYouTube(selected.host) && <div className="warning">Google and YouTube account login is intentionally not moved. Replaying those login cookies can invalidate the session on this computer.</div>}
       <div className="divider" />
-      <div><h3>Test the agent</h3><p className="muted">Adds a storage marker and opens another tab.</p><button className="secondary wide" disabled={busy} onClick={runAction}>Run cloud action</button></div>
       <div className="spacer" />
-      <button className="primary wide" disabled={busy} onClick={bringBack}>Bring back to this Mac</button>
+      <button className="primary wide" disabled={busy} onClick={bringBack}>Bring back to this computer</button>
     </aside>
     <Activity status={status} lines={activity} busy={busy} />
   </section>;
 
   return <section className="browser-pick">
     <main className="tab-panel">
-      <div className="section-title"><div><h2>Choose a Chrome tab</h2><p>These are the tabs open in Chrome right now.</p></div><button className="secondary" disabled={busy} onClick={async () => setTabs(await reload())}>Refresh tabs</button></div>
+      <div className="section-title"><div><h2>Choose a Chrome tab</h2><p>{managed ? 'Sign in inside the Abra browser, then refresh tabs. Your regular browser stays separate.' : 'These are the tabs open in Chrome right now.'}</p></div><button className="secondary" disabled={busy} onClick={async () => setTabs(await reload())}>Refresh tabs</button></div>
+      {managed && <button className="secondary" disabled={busy} onClick={async () => {
+        setBusy(true);
+        try { await local(['browser', 'open', '--headed']); setTabs(await reload()); log('Open your site and sign in, then refresh tabs.'); }
+        catch (error) { log(message(error)); } finally { setBusy(false); }
+      }}>Open Abra browser</button>}
       <div className="toolbar">
         <input value={search} onChange={event => setSearch(event.target.value)} placeholder="Search tabs" />
         <span className="muted">Cookies from</span>
-        <div className="profile-list">{profiles.filter(item => item.directory !== 'active').map(item => <button key={item.directory} className={profile === item.directory ? 'selected' : ''} onClick={() => chooseProfile(item.directory)}>{item.name}{item.lastUsed ? ' · recent' : ''}</button>)}</div>
+        <div className="profile-list">{profiles.filter(item => managed || item.directory !== 'active').map(item => <button key={item.directory} className={profile === item.directory ? 'selected' : ''} onClick={() => chooseProfile(item.directory)}>{item.name}{item.lastUsed ? ' · recent' : ''}</button>)}</div>
       </div>
       <div className="tab-grid">{visibleTabs.map(tab => <button key={tab.id} className={`tab-card ${selected?.id === tab.id ? 'selected' : ''}`} disabled={busy} onClick={() => inspect(tab)}>
         <div className="tab-card-top"><span className="site-mark">{tab.host.split('.')[0].slice(0, 2).toUpperCase()}</span>{tab.active && <span className="open-label">OPEN</span>}</div>
@@ -306,7 +217,6 @@ function Browser({ endpoint, profiles, initialTabs, connected, reload }: { endpo
           return <button className="cookie" key={cookie.key} disabled={protectedGoogleTab} onClick={() => toggleCookie(cookie.key)}><Check checked={!protectedGoogleTab && cookieKeys.has(cookie.key)} /><div><strong>{cookie.name}</strong><span>{cookie.domain}</span><div className="badges">{protectedGoogleTab && <i>Not transferred</i>}{((githubTab && isGitHubLoginCookie(cookie.name)) || (vercelTab && isVercelLoginCookie(cookie.name))) && <i>Login session</i>}{cookie.httpOnly && <i>HttpOnly</i>}{cookie.secure && <i>Secure</i>}{cookie.sameSite && <i>{cookie.sameSite}</i>}</div></div></button>;
         }) : <p className="muted">No matching cookies in this profile.</p>}</div>
         <label className="storage"><input type="checkbox" disabled={protectedGoogleTab} checked={includeStorage && !protectedGoogleTab} onChange={event => setIncludeStorage(event.target.checked)} /><span><strong>Include site storage</strong><small>{protectedGoogleTab ? 'Not transferred for Google or YouTube' : 'Captured when you send'}</small></span></label>
-        <label className="storage route-option" hidden={Boolean(endpoint?.provider)}><input type="checkbox" checked={routeThroughMac} onChange={event => setRouteThroughMac(event.target.checked)} /><span><strong>Route through this Mac</strong><small>The cloud browser uses this Mac’s public internet connection. Local and private addresses stay blocked.</small></span></label>
         {protectedGoogleTab && <div className="warning">For safety, Abra does not copy cookies or storage from Google or YouTube. The tab URL and playback position can still move.</div>}
         {warnings.length > 0 && <div className="warning">Some selected cookies may be bound to this device.</div>}
         {loginSite && !hasPrimaryLoginCookie && <div className="warning">This Chrome profile is not signed in to {loginSite}. Sign in, then refresh the cookies here.</div>}
@@ -323,10 +233,10 @@ function Activity({ status, lines, busy }: { status: string; lines: string[]; bu
 }
 
 function Codex({ endpoint, sessions, connected }: { endpoint: Endpoint | null; sessions: Session[]; connected: boolean }) {
-  const demo = sessions.find(item => item.cwd.includes('abra-teleport-demo-workspace')) || sessions[0] || null;
-  const [selected, setSelected] = useState<Session | null>(demo);
-  const [workspace, setWorkspace] = useState(demo?.cwd || '');
-  const [workspaceAvailable, setWorkspaceAvailable] = useState(demo?.workspace_exists !== false);
+  const initialSession = sessions[0] || null;
+  const [selected, setSelected] = useState<Session | null>(initialSession);
+  const [workspace, setWorkspace] = useState(initialSession?.cwd || '');
+  const [workspaceAvailable, setWorkspaceAvailable] = useState(initialSession?.workspace_exists !== false);
   const [details, setDetails] = useState<SessionDetails | null>(null);
   const [detailsBusy, setDetailsBusy] = useState(false);
   const [stage, setStage] = useState<'local' | 'cloud' | 'local-app'>('local');
@@ -385,19 +295,9 @@ function Codex({ endpoint, sessions, connected }: { endpoint: Endpoint | null; s
     setBusy(true); setActivity([]);
     try {
       log('Sending the session and workspace to the cloud…');
-      if (endpoint.provider) {
-        setDetails(await window.abra!.sandbox('codex-up', { session: selected.session_id, workspace }));
-        setCloudApp(await window.abra!.sandbox('app-inspect')); setStage('cloud');
-        log('The session and workspace are live in the sandbox.'); return;
-      }
-      const sent = await local<{ session_snapshot_id: string }>(['codex', 'up', endpoint.abra_peer_id, '--session', selected.session_id, '--workspace', workspace, '--confirm-workspace']);
-      log('Restoring the same Codex session in the cloud…');
-      const cloudWorkspace = '/workspace/abra-teleport/current';
-      await remote(['codex', 'receive', sent.session_snapshot_id, '--workspace', cloudWorkspace]);
-      setDetails(await remote<SessionDetails>(['codex', 'inspect', selected.session_id]));
-      setCloudApp(await remote<AppInspection>(['app', 'inspect']));
-      setStage('cloud');
-      log('The session and workspace are live in the cloud.');
+      setDetails(await window.abra!.sandbox('codex-up', { session: selected.session_id, workspace }));
+      setCloudApp(await window.abra!.sandbox('app-inspect')); setStage('cloud');
+      log('The session and workspace are live in the sandbox.'); return;
     } catch (error) { log(`Failed: ${message(error)}`); }
     finally { setBusy(false); }
   };
@@ -407,15 +307,8 @@ function Codex({ endpoint, sessions, connected }: { endpoint: Endpoint | null; s
     setBusy(true);
     try {
       log('Codex is working in the cloud…');
-      if (endpoint?.provider) {
-        setDetails(await window.abra.sandbox('codex-run', { prompt: task.trim() }));
-        setCloudApp(await window.abra.sandbox('app-inspect')); log('Sandbox task finished.'); return;
-      }
-      const raw = await window.abra.remote(['codex', 'run', task.trim(), '--no-return']);
-      parseTrailingJSON<{ completed: boolean; returned: boolean }>(raw, value => Boolean(value && typeof value === 'object' && 'completed' in value));
-      setDetails(await remote<SessionDetails>(['codex', 'inspect', selected.session_id]));
-      setCloudApp(await remote<AppInspection>(['app', 'inspect']));
-      log('Cloud task finished. The updated state is still in the cloud.');
+      setDetails(await window.abra.sandbox('codex-run', { prompt: task.trim() }));
+      setCloudApp(await window.abra.sandbox('app-inspect')); log('Sandbox task finished.'); return;
     } catch (error) { log(`Failed: ${message(error)}`); }
     finally { setBusy(false); }
   };
@@ -425,17 +318,9 @@ function Codex({ endpoint, sessions, connected }: { endpoint: Endpoint | null; s
     setBusy(true);
     try {
       log('Bringing the session and workspace back…');
-      if (endpoint.provider) {
-        const result = await window.abra!.sandbox('codex-down');
-        setWorkspace(result.workspace); setDetails(result.details); setCloudApp(null); setStage('local');
-        log(`Returned. The session and workspace are back at ${result.workspace}.`); return;
-      }
-      const returned = await remote<{ session_snapshot_id: string }>(['codex', 'down', endpoint.local_peer_id, '--confirm-workspace']);
-      await local(['codex', 'receive', returned.session_snapshot_id, '--workspace', workspace]);
-      setDetails(await local<SessionDetails>(['codex', 'inspect', selected.session_id]));
-      setCloudApp(null);
-      setStage('local');
-      log('Returned. The same Codex session is back on this Mac.');
+      const result = await window.abra!.sandbox('codex-down');
+      setWorkspace(result.workspace); setDetails(result.details); setCloudApp(null); setStage('local');
+      log(`Returned. The session and workspace are back at ${result.workspace}.`); return;
     } catch (error) { log(`Failed: ${message(error)}`); }
     finally { setBusy(false); }
   };
@@ -444,47 +329,32 @@ function Codex({ endpoint, sessions, connected }: { endpoint: Endpoint | null; s
     if (!endpoint || !selected || !window.abra) return;
     setBusy(true);
     try {
-      if (endpoint.provider) {
-        log('Bringing the workspace back and starting its captured app recipe…');
-        const result = await window.abra.sandbox('codex-down');
-        setWorkspace(result.workspace); setWorkspaceAvailable(true); setDetails(result.details); setStage('local');
-        const started = await window.abra.appStart(result.workspace);
-        setLocalApp(started); setCloudApp(null); setStage('local-app'); log(`Running locally at ${started.url}`); return;
-      }
-      log('Capturing the cloud server recipe…');
-      const inspected = await remote<AppInspection>(['app', 'inspect']);
-      if (!inspected.selected) throw new Error('No runnable localhost server was found in the cloud workspace.');
-      log('Pulling the app and its files to this Mac…');
-      const returned = await remote<{ session_snapshot_id: string }>(['codex', 'down', endpoint.local_peer_id, '--confirm-workspace']);
-      await ignore(remote(['app', 'stop']));
+      log('Bringing the workspace back and starting its captured app recipe…');
       const target = await window.abra.appTarget(folder(workspace), selected.session_id);
-      await local(['codex', 'receive', returned.session_snapshot_id, '--workspace', target]);
-      setWorkspace(target); setWorkspaceAvailable(true);
-      setDetails(await local<SessionDetails>(['codex', 'inspect', selected.session_id]));
-      log(`Starting the app locally on port ${inspected.selected.ports[0]}…`);
-      const started = await window.abra.appStart(target);
-      setLocalApp(started); setCloudApp(null); setStage('local-app');
-      log(`Running locally at ${started.url}`);
+      const result = await window.abra.sandbox('codex-down', { workspace: target });
+      setWorkspace(result.workspace); setWorkspaceAvailable(true); setDetails(result.details); setStage('local');
+      const started = await window.abra.appStart(result.workspace);
+      setLocalApp(started); setCloudApp(null); setStage('local-app'); log(`Running locally at ${started.url}`); return;
     } catch (error) { log(`Failed: ${message(error)}`); }
     finally { setBusy(false); }
   };
 
   const stopLocalApp = async () => {
     if (window.abra) await window.abra.appStop();
-    setLocalApp(null); setStage('local'); log('Local app stopped. The restored files remain on this Mac.');
+    setLocalApp(null); setStage('local'); log('Local app stopped. The restored files remain on this computer.');
   };
 
   return <section className="codex-layout">
-    <aside className="session-list"><div><h2>{stage === 'cloud' ? 'Session in cloud' : stage === 'local-app' ? 'Testing locally' : 'Codex sessions'}</h2><p>{stage === 'cloud' ? 'Run tasks, test locally, or bring it back.' : stage === 'local-app' ? 'The restored app is running on this Mac.' : 'Pick a completed session by its latest prompt.'}</p></div>{sessions.slice(0, 30).map(session => <button key={session.session_id} disabled={stage !== 'local' || session.active_writer === true} className={`${selected?.session_id === session.session_id ? 'selected ' : ''}${session.workspace_exists === false ? 'missing ' : ''}${session.active_writer ? 'active-writer' : ''}`} onClick={() => chooseSession(session)}><strong>{session.last_prompt || folder(session.cwd)}</strong><span>{folder(session.cwd)} · {formatBytes(session.bytes)}</span><small>{session.active_writer ? 'Open in Codex · finish or close it before moving' : `${session.workspace_exists === false ? 'Workspace missing · ' : ''}${formatDate(session.updated_at)} · ${shortID(session.session_id)}`}</small></button>)}</aside>
+    <aside className="session-list"><div><h2>{stage === 'cloud' ? 'Session in cloud' : stage === 'local-app' ? 'Testing locally' : 'Codex sessions'}</h2><p>{stage === 'cloud' ? 'Run tasks, test locally, or bring it back.' : stage === 'local-app' ? 'The restored app is running on this computer.' : 'Pick a completed session by its latest prompt.'}</p></div>{sessions.slice(0, 30).map(session => <button key={session.session_id} disabled={stage !== 'local' || session.active_writer === true} className={`${selected?.session_id === session.session_id ? 'selected ' : ''}${session.workspace_exists === false ? 'missing ' : ''}${session.active_writer ? 'active-writer' : ''}`} onClick={() => chooseSession(session)}><strong>{session.last_prompt || folder(session.cwd)}</strong><span>{folder(session.cwd)} · {formatBytes(session.bytes)}</span><small>{session.active_writer ? 'Open in Codex · finish or close it before moving' : `${session.workspace_exists === false ? 'Workspace missing · ' : ''}${formatDate(session.updated_at)} · ${shortID(session.session_id)}`}</small></button>)}</aside>
     <main className="task-panel">
-      <div className="codex-heading"><div><span className="eyebrow">{stage === 'cloud' ? 'IN THE CLOUD' : stage === 'local-app' ? 'LOCAL PREVIEW' : 'CODEX HANDOFF'}</span><h2>{stage === 'cloud' ? 'Session and workspace are live' : stage === 'local-app' ? 'App restored and running' : 'What will move'}</h2></div>{stage === 'cloud' ? <span className="cloud-badge"><span className="dot online" />CLOUD</span> : stage === 'local-app' ? <span className="local-badge"><span className="dot online" />LOCAL</span> : selected?.cwd.includes('abra-teleport-demo-workspace') && <span className="demo-badge">DEMO SESSION</span>}</div>
+      <div className="codex-heading"><div><span className="eyebrow">{stage === 'cloud' ? 'IN THE CLOUD' : stage === 'local-app' ? 'LOCAL PREVIEW' : 'CODEX HANDOFF'}</span><h2>{stage === 'cloud' ? 'Session and workspace are live' : stage === 'local-app' ? 'App restored and running' : 'What will move'}</h2></div>{stage === 'cloud' ? <span className="cloud-badge"><span className="dot online" />CLOUD</span> : stage === 'local-app' ? <span className="local-badge"><span className="dot online" />LOCAL</span> : null}</div>
       {selected && <div className="transfer-manifest">
         <div><span className="transfer-icon">↗</span><span><strong>Codex conversation</strong><small>{details ? `${details.user_turns} user turns · ${formatBytes(selected.bytes)}` : `${formatBytes(selected.bytes)} session file`}</small></span></div>
         <div className={workspaceAvailable ? '' : 'workspace-missing'}><span className="transfer-icon">⌘</span><span><strong>{workspaceAvailable ? 'Complete workspace' : 'Workspace missing'}</strong><small>{workspace}</small></span>{stage === 'local' && <button className="workspace-button" onClick={chooseWorkspace}>{workspaceAvailable ? 'Change' : 'Choose folder'}</button>}</div>
-        <p>Codex login, settings, OAuth files, and local databases stay on this Mac.</p>
+        <p>Codex login, settings, OAuth files, and local databases stay on this computer.</p>
       </div>}
       {!workspaceAvailable && <div className="warning workspace-warning">The original folder no longer exists. Choose an existing workspace for this session before teleporting it.</div>}
-      {selected?.active_writer && <div className="warning workspace-warning">This session is currently open in Codex. Finish or close it before moving it, or select the ready demo session.</div>}
+      {selected?.active_writer && <div className="warning workspace-warning">This session is currently open in Codex. Finish or close it before moving it, or select another completed session.</div>}
       {stage !== 'local-app' && <div className="conversation-preview">
         <div><h3>Recent conversation</h3><span>{detailsBusy ? 'Reading…' : details ? `${details.messages.length} shown` : ''}</span></div>
         {details?.messages.length ? <div className="messages">{details.messages.map((item, index) => <div className={`message ${item.role}`} key={`${item.role}-${index}`}><strong>{item.role === 'user' ? 'You' : 'Codex'}</strong><p>{item.text}</p></div>)}</div> : <p className="muted">{detailsBusy ? 'Loading the selected session…' : 'No visible conversation messages found.'}</p>}
@@ -522,7 +392,7 @@ export default function App() {
       setProfiles(nextProfiles); setTabs(nextTabs); setSessions(nextSessions);
       const provider = await window.abra.providerConfig();
       if (provider) {
-        setEndpoint({ abra_peer_id: '', local_peer_id: '', provider });
+        setEndpoint({ provider });
         await window.abra.sandbox('status');
       } else {
         setEndpoint(null); setConnected(false); return;
@@ -533,5 +403,5 @@ export default function App() {
 
   useEffect(() => { void refresh(); }, []);
 
-  return <div className="app-shell"><Header mode={mode} setMode={setMode} connected={connected} refresh={() => void refresh()} /><ProviderSettings onConnected={refresh} />{error && <div className="global-error">{error}</div>}{mode === 'browser' ? <Browser key={endpoint?.provider?.id || 'legacy'} endpoint={endpoint} profiles={profiles} initialTabs={tabs} connected={connected} reload={refreshTabs} /> : <Codex key={endpoint?.provider?.id || 'legacy'} endpoint={endpoint} sessions={sessions} connected={connected} />}</div>;
+  return <div className="app-shell"><Header mode={mode} setMode={setMode} connected={connected} refresh={() => void refresh()} /><ProviderSettings onConnected={refresh} />{error && <div className="global-error">{error}</div>}{mode === 'browser' ? <Browser key={endpoint?.provider?.id || 'unpaired'} endpoint={endpoint} profiles={profiles} initialTabs={tabs} connected={connected} reload={refreshTabs} /> : <Codex key={endpoint?.provider?.id || 'unpaired'} endpoint={endpoint} sessions={sessions} connected={connected} />}</div>;
 }

@@ -1,14 +1,16 @@
 {
-  "name": "abra-teleport",
+  "name": "@abra/desktop",
   "version": "0.3.0",
   "private": true,
-  "main": "electron/main.cjs",
+  "main": "build-electron/electron/main.js",
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
-    "desktop": "npm run build && electron .",
+    "build": "npm run build:electron && vite build",
+    "desktop": "npm --prefix ../abra-teleport run build && npm run build && electron .",
     "desktop:build": "npm run typecheck && cargo build --release --manifest-path ../abra/Cargo.toml -p abra-cli && bash ../abra-teleport/scripts/package-agent.sh && npm run build && electron-builder --mac dir",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.electron.json --noEmit",
+    "desktop:build:windows": "npm run typecheck && npm run build && tsx scripts/package-windows.ts",
+    "build:electron": "tsc -p tsconfig.electron.json"
   },
   "dependencies": {
     "react": "19.1.0",
@@ -20,7 +22,6 @@
     "@vitejs/plugin-react": "^5.0.2",
     "electron": "^44.1.1",
     "electron-builder": "^26.15.3",
-    "typescript": "^5.8.3",
     "vite": "^7.1.5"
   },
   "build": {
@@ -29,7 +30,7 @@
     "asar": true,
     "files": [
       "dist-web/**/*",
-      "electron/**/*",
+      "build-electron/electron/**/*",
       "package.json"
     ],
     "extraResources": [
@@ -38,23 +39,23 @@
         "to": "Runtime/wrapper/runtime/install.json"
       },
       {
-        "from": "../abra-teleport/bin",
+        "from": "../abra-teleport/build/bin",
         "to": "Runtime/wrapper/bin"
       },
       {
-        "from": "../abra-teleport/src",
+        "from": "../abra-teleport/build/src",
         "to": "Runtime/wrapper/src"
       },
       {
-        "from": "../abra-teleport/adapters",
+        "from": "../abra-teleport/build/adapters",
         "to": "Runtime/wrapper/adapters"
       },
       {
-        "from": "../abra-teleport/scripts",
+        "from": "../abra-teleport/build/scripts",
         "to": "Runtime/wrapper/scripts"
       },
       {
-        "from": "../abra-teleport/package.json",
+        "from": "../abra-teleport/build/package.json",
         "to": "Runtime/wrapper/package.json"
       },
       {

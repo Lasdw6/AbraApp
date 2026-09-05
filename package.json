@@ -1,1 +1,25 @@
-{"name":"abra-app","private":true,"scripts":{"test":"npm --prefix abra-teleport test","desktop":"npm --prefix desktop run desktop","build":"npm --prefix desktop run desktop:build"}}
+{
+  "name": "abra-app",
+  "private": true,
+  "scripts": {
+    "test": "npm --prefix abra-teleport test",
+    "desktop": "npm --prefix desktop run desktop",
+    "build": "npm --prefix desktop run desktop:build",
+    "build:windows": "npm --prefix desktop run desktop:build:windows",
+    "check": "npm run build:cli && npm --prefix abra-teleport run check && npm --prefix desktop run typecheck && tsc -p tsconfig.tools.json",
+    "build:cli": "npm --prefix abra-teleport run build"
+  },
+  "type": "module",
+  "workspaces": [
+    "desktop",
+    "abra-teleport"
+  ],
+  "devDependencies": {
+    "typescript": "5.9.3",
+    "@types/node": "^22.0.0",
+    "tsx": "^4.20.0"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

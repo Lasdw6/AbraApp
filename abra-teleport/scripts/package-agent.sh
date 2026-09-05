@@ -2,11 +2,12 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 CORE="${ABRA_SOURCE:-$ROOT/../abra}"
+npm --prefix "$ROOT" run build
 STAGE="$(mktemp -d)"
 trap 'rm -rf "$STAGE"' EXIT
 PACKAGE="$STAGE/abra-teleport"
 mkdir -p "$PACKAGE/runtime/core-source" "$ROOT/dist"
-for item in bin src adapters scripts package.json; do cp -R "$ROOT/$item" "$PACKAGE/"; done
+for item in bin src adapters scripts package.json; do cp -R "$ROOT/build/$item" "$PACKAGE/"; done
 cp "$CORE/adapters/sandbox/collector/observer.py" "$PACKAGE/runtime/observer.py"
 cp -R "$CORE/adapters/browser-session" "$PACKAGE/runtime/browser-session"
 cp -R "$CORE/adapters/lib" "$PACKAGE/runtime/lib"
@@ -29,4 +30,4 @@ done
 COPYFILE_DISABLE=1 tar --exclude='__pycache__' --exclude='*.pyc' --exclude='target' --exclude='.DS_Store' \
   -C "$STAGE" -czf "$ROOT/dist/abra-teleport-agent.tar.gz" abra-teleport
 echo "$ROOT/dist/abra-teleport-agent.tar.gz"
-node "$ROOT/scripts/package-connect.js"
+node "$ROOT/build/scripts/package-connect.js"
