@@ -14,10 +14,14 @@ The default sandbox installed the original source-build package successfully. Th
 
 Pairing failed with `transport: timed out`. TLS connections from the sandbox to the default iroh relay reset; relay access worked from the Firecracker guest. Browser and Codex transfer therefore could not run on Daytona. This is a failed connectivity test, not a successful provider round trip.
 
-Daytona documents organization-level network restrictions that can prevent sandbox access to unlisted destinations: https://www.daytona.io/docs/en/network-limits/ . The installer domain was added after these live tests; its DNS/HTTPS check is separate from the provider connectivity result.
+Daytona documents organization-level network restrictions that can prevent sandbox access to unlisted destinations: https://www.daytona.io/docs/en/network-limits/ . A fresh Daytona probe also failed to download from `https://abra.vividh.lol/install.sh` with `curl: (35) Recv failure: Connection reset by peer`. That probe sandbox was deleted.
 
 ## Cleanup
 
 The test Daytona sandbox was deleted. The Firecracker guest was stopped, and its temporary EC2 instance, security group, and key pair were removed. Existing EC2 instances were left running.
 
 Full local reports are under `/Users/vividh/Desktop/abra-test-results/teleport-live-20260905/`.
+
+## Custom installer domain: passed
+
+`abra.vividh.lol` resolves to GitHub Pages with a valid HTTPS certificate and HTTPS enforcement. Its hosted script matches the published installer. A fresh isolated macOS install paired over iroh in 6.3 seconds, discovery succeeded, and a second connection command reused the installed CLI. A regression test verifies that a failed installer download returns failure to the agent.

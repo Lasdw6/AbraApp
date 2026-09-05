@@ -7,7 +7,8 @@ export function connectionCommand(ticket, installUrl) {
   if (!installUrl) return { command: `abra-teleport agent connect ${quote(ticket)}`, installs_cli: false };
   const url = new URL(installUrl);
   if (url.protocol !== 'https:' || url.username || url.password || url.hash) throw new Error('Installer URL must be an HTTPS download URL.');
-  return { command: `curl -fsSL --proto '=https' --proto-redir '=https' ${quote(url.href)} | bash -s -- ${quote(ticket)}`, installs_cli: true };
+  const script = `curl -fsSL --proto '=https' --proto-redir '=https' ${quote(url.href)} | bash -s -- "$1"`;
+  return { command: `bash -o pipefail -c ${quote(script)} -- ${quote(ticket)}`, installs_cli: true };
 }
 
 export async function installerUrl() {

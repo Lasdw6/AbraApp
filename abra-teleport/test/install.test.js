@@ -14,9 +14,19 @@ test('connection command requires HTTPS and keeps the ticket out of the download
   const ticket = 'abra-pair/1/test';
   const output = connectionCommand(ticket, 'https://example.com/connect.sh');
   assert.equal(output.installs_cli, true);
-  assert.match(output.command, /connect\.sh' \| bash -s -- 'abra-pair\/1\/test'$/);
+  assert.ok(output.command.startsWith('bash -o pipefail -c '));
+  assert.ok(output.command.endsWith("-- 'abra-pair/1/test'"));
   assert.throws(() => connectionCommand(ticket, 'http://example.com/install'));
   assert.throws(() => connectionCommand(ticket, 'https://user:secret@example.com/install'));
+});
+
+test('connection command fails when the installer download fails', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'abra-bootstrap-download-'));
+  try {
+    await writeFile(path.join(root, 'curl'), '#!/bin/sh\nexit 22\n', { mode: 0o755 });
+    const { command } = connectionCommand('abra-pair/1/test', 'https://example.com/connect.sh');
+    await assert.rejects(exec('bash', ['-c', command], { env: { ...process.env, PATH: `${root}:/usr/bin:/bin` } }), error => error.code === 22);
+  } finally { await rm(root, { recursive: true, force: true }); }
 });
 
 test('bootstrap installs once, pairs again without downloading, and rejects a corrupt archive', async () => {
