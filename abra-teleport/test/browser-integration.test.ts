@@ -65,7 +65,7 @@ test('handoff reuses a sandbox browser, returns the tab, and preserves existing 
   const homeB = path.join(root, 'b');
   const providerHome = path.join(root, 'provider');
   const original = { ...process.env };
-  process.env.ABRA_BIN ||= path.resolve(import.meta.dirname, '..', '..', 'abra', 'target', 'debug', 'abra');
+  process.env.ABRA_BIN ||= path.resolve(import.meta.dirname, '..', '..', 'abra', 'target', 'debug', process.platform === 'win32' ? 'abra.exe' : 'abra');
   process.env.ABRA_BROWSER_ADAPTER ||= path.resolve(import.meta.dirname, '..', '..', 'abra', 'adapters', 'browser-session');
   const web = await withServer();
   try {
@@ -167,7 +167,7 @@ test('handoff reuses a sandbox browser, returns the tab, and preserves existing 
     await selectDevice(providerHome); await stopChrome().catch(() => {});
     Object.keys(process.env).forEach(key => { if (!(key in original)) delete process.env[key]; });
     Object.assign(process.env, original);
-    await rm(root, { recursive: true, force: true });
+    await rm(root, { recursive: true, force: true, maxRetries: 20, retryDelay: 200 });
   }
 });
 
@@ -178,7 +178,7 @@ test('managed browser selects one tab, scopes cookies/storage, and rejects a cha
   const web = await withServer();
   process.env.ABRA_TELEPORT_HOME = root;
   process.env.ABRA_TELEPORT_BROWSER_SOURCE = 'managed';
-  process.env.ABRA_BIN ||= path.resolve(import.meta.dirname, '../../abra/target/debug/abra');
+  process.env.ABRA_BIN ||= path.resolve(import.meta.dirname, '../../abra/target/debug', process.platform === 'win32' ? 'abra.exe' : 'abra');
   process.env.ABRA_BROWSER_ADAPTER ||= path.resolve(import.meta.dirname, '../../abra/adapters/browser-session');
   let cdp;
   try {
@@ -223,6 +223,6 @@ test('managed browser selects one tab, scopes cookies/storage, and rejects a cha
     await new Promise(resolve => web.server.close(resolve));
     Object.keys(process.env).forEach(key => { if (!(key in original)) delete process.env[key]; });
     Object.assign(process.env, original);
-    await rm(root, { recursive: true, force: true });
+    await rm(root, { recursive: true, force: true, maxRetries: 20, retryDelay: 200 });
   }
 });

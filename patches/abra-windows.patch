@@ -1,0 +1,453 @@
+diff --git a/Cargo.lock b/Cargo.lock
+index f3ba8a8..5a9c2bc 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -337,14 +337,17 @@ dependencies = [
+  "abra-relay",
+  "async-trait",
+  "data-encoding",
++ "dunce",
+  "fs2",
+  "hex",
++ "interprocess",
+  "rand 0.8.8",
+  "rustix",
+  "serde",
+  "serde_json",
+  "tempfile",
+  "tokio",
++ "widestring",
+ ]
+ 
+ [[package]]
+@@ -810,6 +813,18 @@ dependencies = [
+  "winapi",
+ ]
+ 
++[[package]]
++name = "doctest-file"
++version = "1.1.1"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "c2db04e74f0a9a93103b50e90b96024c9b2bdca8bce6a632ec71b88736d3d359"
++
++[[package]]
++name = "dunce"
++version = "1.0.5"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "92773504d58c093f6de2459af4af33faa518c13451eb8f2b5698ed3d36e7c813"
++
+ [[package]]
+ name = "ed25519"
+ version = "2.2.3"
+@@ -1535,6 +1550,21 @@ dependencies = [
+  "generic-array",
+ ]
+ 
++[[package]]
++name = "interprocess"
++version = "2.4.2"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "069323743400cb7ab06a8fe5c1ed911d36b6919ec531661d034c89083629595b"
++dependencies = [
++ "doctest-file",
++ "futures-core",
++ "libc",
++ "recvmsg",
++ "tokio",
++ "widestring",
++ "windows-sys 0.61.2",
++]
++
+ [[package]]
+ name = "ipconfig"
+ version = "0.3.4"
+@@ -2665,6 +2695,12 @@ dependencies = [
+  "rand_core 0.10.1",
+ ]
+ 
++[[package]]
++name = "recvmsg"
++version = "1.0.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "d3edd4d5d42c92f0a659926464d4cce56b562761267ecf0f469d85b7de384175"
++
+ [[package]]
+ name = "redox_syscall"
+ version = "0.5.18"
+diff --git a/adapters/browser-session/lib/util.js b/adapters/browser-session/lib/util.js
+index 0b0c0cf..ed1561a 100644
+--- a/adapters/browser-session/lib/util.js
++++ b/adapters/browser-session/lib/util.js
+@@ -1,5 +1,5 @@
+-import { createHash, createPrivateKey, createPublicKey, generateKeyPairSync, sign, verify } from 'node:crypto';
+-import { chmod, lstat, mkdir, open, readFile, readdir, rename, stat } from 'node:fs/promises';
++import { randomUUID, createHash, createPrivateKey, createPublicKey, generateKeyPairSync, sign, verify } from 'node:crypto';
++import { chmod, lstat, mkdir, open, readFile, readdir, rename, stat, rm } from 'node:fs/promises';
+ import os from 'node:os';
+ import path from 'node:path';
+ import { domainToASCII } from 'node:url';
+@@ -37,8 +37,13 @@ export async function secureTree(target) {
+ }
+ export async function writePrivate(file, bytes) {
+   await privateDir(path.dirname(file));
+-  const handle = await open(file, 'w', 0o600);
+-  try { await handle.writeFile(bytes); await handle.chmod(0o600); } finally { await handle.close(); }
++  const temporary = `${file}.tmp-${randomUUID()}`;
++  try {
++    const handle = await open(temporary, 'wx', 0o600);
++    try { await handle.writeFile(bytes); await handle.chmod(0o600); await handle.sync(); }
++    finally { await handle.close(); }
++    await rename(temporary, file);
++  } finally { await rm(temporary, { force: true }).catch(() => {}); }
+ }
+ export async function writeJson(file, value) { await writePrivate(file, `${JSON.stringify(value, null, 2)}\n`); }
+ export async function readJson(file) { return JSON.parse(await readFile(file, 'utf8')); }
+diff --git a/crates/abra-cli/src/main.rs b/crates/abra-cli/src/main.rs
+index 1909a23..1f4cd4f 100644
+--- a/crates/abra-cli/src/main.rs
++++ b/crates/abra-cli/src/main.rs
+@@ -12,7 +12,7 @@ use std::{
+     time::Duration,
+ };
+ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+-use tokio::net::UnixStream;
++use cadabra::local::LocalStream as UnixStream;
+ 
+ #[derive(Parser)]
+ #[command(name = "abra", version, about = "Teleport workspaces and handoffs")]
+diff --git a/crates/abra-core/src/cas.rs b/crates/abra-core/src/cas.rs
+index bd29f00..240051f 100644
+--- a/crates/abra-core/src/cas.rs
++++ b/crates/abra-core/src/cas.rs
+@@ -308,9 +308,7 @@ impl BlobStore {
+         }
+         fs::rename(path, &dest).map_err(|e| Error::io(&dest, e))?;
+         let shard = dest.parent().expect("CAS object has shard directory");
+-        fs::File::open(shard)
+-            .and_then(|file| file.sync_all())
+-            .map_err(|e| Error::io(shard, e))?;
++        crate::util::sync_directory(shard)?;
+         Ok(bytes)
+     }
+ 
+@@ -339,9 +337,7 @@ impl BlobStore {
+         }
+         fs::rename(&tmp, &dest).map_err(|e| Error::io(&dest, e))?;
+         let shard = dest.parent().expect("CAS object has shard directory");
+-        fs::File::open(shard)
+-            .and_then(|f| f.sync_all())
+-            .map_err(|e| Error::io(shard, e))?;
++        crate::util::sync_directory(shard)?;
+         Ok(hash)
+     }
+ 
+@@ -379,9 +375,7 @@ impl BlobStore {
+         }
+         fs::rename(&tmp, &dest).map_err(|e| Error::io(&dest, e))?;
+         let shard = dest.parent().expect("CAS object has shard directory");
+-        fs::File::open(shard)
+-            .and_then(|f| f.sync_all())
+-            .map_err(|e| Error::io(shard, e))?;
++        crate::util::sync_directory(shard)?;
+         Ok((hash, bytes))
+     }
+ 
+@@ -400,7 +394,7 @@ impl BlobStore {
+         }
+         let temporary = destination.with_extension(format!("{}.tmp", rand::random::<u64>()));
+         let bytes = fs::copy(&source, &temporary).map_err(|e| Error::io(&temporary, e))?;
+-        fs::File::open(&temporary)
++        fs::OpenOptions::new().write(true).open(&temporary)
+             .and_then(|f| f.sync_all())
+             .map_err(|e| Error::io(&temporary, e))?;
+         if hash_file(&temporary)? != *hash {
+@@ -409,9 +403,7 @@ impl BlobStore {
+         }
+         fs::rename(&temporary, destination).map_err(|e| Error::io(destination, e))?;
+         let parent = destination.parent().expect("destination has parent");
+-        fs::File::open(parent)
+-            .and_then(|f| f.sync_all())
+-            .map_err(|e| Error::io(parent, e))?;
++        crate::util::sync_directory(parent)?;
+         Ok(bytes)
+     }
+ 
+diff --git a/crates/abra-core/src/util.rs b/crates/abra-core/src/util.rs
+index d310944..f61aeee 100644
+--- a/crates/abra-core/src/util.rs
++++ b/crates/abra-core/src/util.rs
+@@ -20,9 +20,7 @@ pub fn atomic_write(path: &Path, bytes: &[u8]) -> Result<()> {
+     file.write_all(bytes).map_err(|e| Error::io(&tmp, e))?;
+     file.sync_all().map_err(|e| Error::io(&tmp, e))?;
+     fs::rename(&tmp, path).map_err(|e| Error::io(path, e))?;
+-    fs::File::open(parent)
+-        .and_then(|f| f.sync_all())
+-        .map_err(|e| Error::io(parent, e))
++    sync_directory(parent)
+ }
+ 
+ pub(crate) fn hex_encode(bytes: &[u8]) -> String {
+@@ -154,3 +152,13 @@ mod tests {
+         assert!(now_ms() > 1_577_836_800_000);
+     }
+ }
++
++/// Unix needs directory fsync after rename. Windows does not support opening
++/// directories this way; file contents are flushed before the atomic rename.
++pub(crate) fn sync_directory(path: &Path) -> Result<()> {
++    #[cfg(unix)]
++    fs::File::open(path).and_then(|file| file.sync_all()).map_err(|error| Error::io(path, error))?;
++    #[cfg(not(unix))]
++    let _ = path;
++    Ok(())
++}
+diff --git a/crates/cadabra/Cargo.toml b/crates/cadabra/Cargo.toml
+index c498f06..81d1342 100644
+--- a/crates/cadabra/Cargo.toml
++++ b/crates/cadabra/Cargo.toml
+@@ -22,10 +22,17 @@ tokio = { workspace = true, features = ["net", "process"] }
+ rand.workspace = true
+ hex.workspace = true
+ fs2 = "0.4"
+-rustix = { version = "1", features = ["fs", "process"] }
+ tempfile.workspace = true
+ data-encoding.workspace = true
+ abra-relay = { path = "../abra-relay" }
+ 
+ [dev-dependencies]
+ tempfile.workspace = true
++
++[target.'cfg(unix)'.dependencies]
++rustix = { version = "1", features = ["fs", "process"] }
++
++[target.'cfg(windows)'.dependencies]
++interprocess = { version = "=2.4.2", features = ["tokio"] }
++widestring = "1"
++dunce = "1"
+diff --git a/crates/cadabra/src/adapters.rs b/crates/cadabra/src/adapters.rs
+index cf391e7..379eb19 100644
+--- a/crates/cadabra/src/adapters.rs
++++ b/crates/cadabra/src/adapters.rs
+@@ -550,7 +550,18 @@ async fn invoke(
+     let request_id = hex::encode(id);
+     request["protocol"] = json!("abra-adapter/1");
+     request["request_id"] = json!(request_id);
+-    let mut child = Command::new(&adapter.executable)
++    let mut command = Command::new(&adapter.executable);
++    #[cfg(windows)]
++    {
++        // Windows does not execute shebang scripts. Never invoke a shell.
++        if adapter.executable.extension().is_some_and(|ext| ext == "js" || ext == "mjs") {
++            command = Command::new(std::env::var_os("ABRA_NODE_BIN").unwrap_or_else(|| "node.exe".into()));
++            // Electron cannot load a script through a verbatim (\\?\) path.
++            command.arg(dunce::simplified(&adapter.executable));
++        }
++        command.creation_flags(0x08000000); // CREATE_NO_WINDOW
++    }
++    let mut child = command
+         .stdin(Stdio::piped())
+         .stdout(Stdio::piped())
+         .stderr(Stdio::inherit())
+diff --git a/crates/cadabra/src/background.rs b/crates/cadabra/src/background.rs
+index 892dab9..6708270 100644
+--- a/crates/cadabra/src/background.rs
++++ b/crates/cadabra/src/background.rs
+@@ -62,6 +62,7 @@ impl PidFile {
+ }
+ 
+ /// A pid we cannot signal but that exists is still alive.
++#[cfg(unix)]
+ pub fn is_alive(pid: i32) -> bool {
+     let Some(pid) = rustix::process::Pid::from_raw(pid) else {
+         return false;
+@@ -74,6 +75,7 @@ pub fn is_alive(pid: i32) -> bool {
+ 
+ /// `(start time, command line)` as `ps` reports them. Pid reuse is the reason
+ /// both are checked before a signal is sent.
++#[cfg(unix)]
+ pub fn process_identity(pid: i32) -> Option<(String, String)> {
+     let output = Command::new("/bin/ps")
+         .args(["-p", &pid.to_string(), "-o", "lstart=", "-o", "command="])
+@@ -138,8 +140,16 @@ pub async fn stop(root: &Path) -> Result<Value> {
+         )
+         .into());
+     }
+-    let pid = rustix::process::Pid::from_raw(record.pid).ok_or("invalid recorded pid")?;
+-    rustix::process::kill_process(pid, rustix::process::Signal::TERM)?;
++    #[cfg(unix)]
++    {
++        let pid = rustix::process::Pid::from_raw(record.pid).ok_or("invalid recorded pid")?;
++        rustix::process::kill_process(pid, rustix::process::Signal::TERM)?;
++    }
++    #[cfg(windows)]
++    {
++        let status = windows_command("taskkill.exe").args(["/PID", &record.pid.to_string(), "/F"]).status()?;
++        if !status.success() { return Err("could not stop recorded daemon".into()); }
++    }
+     let deadline = tokio::time::Instant::now() + STOP_TIMEOUT;
+     while is_alive(record.pid) {
+         if tokio::time::Instant::now() >= deadline {
+@@ -160,6 +170,7 @@ pub async fn stop(root: &Path) -> Result<Value> {
+ /// there does not reach it. The re-executed child calls this itself, which
+ /// keeps the parent free of `pre_exec` and unsafe code.
+ pub fn detach_from_terminal() {
++    #[cfg(unix)]
+     if std::env::var_os("ABRA_DAEMON_DETACH").is_some() {
+         let _ = rustix::process::setsid();
+     }
+@@ -225,3 +236,26 @@ mod tests {
+         assert!(PidFile::load(root.path()).unwrap().is_none());
+     }
+ }
++
++#[cfg(windows)]
++fn windows_command(program: &str) -> Command {
++    use std::os::windows::process::CommandExt;
++    let mut command = Command::new(program);
++    command.creation_flags(0x08000000);
++    command
++}
++
++#[cfg(windows)]
++pub fn is_alive(pid: i32) -> bool {
++    pid > 0 && process_identity(pid).is_some()
++}
++
++#[cfg(windows)]
++pub fn process_identity(pid: i32) -> Option<(String, String)> {
++    if pid <= 0 { return None; }
++    let script = format!("[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new(); $p = Get-CimInstance Win32_Process -Filter 'ProcessId = {pid}'; if ($p) {{ @{{started_at=$p.CreationDate.ToUniversalTime().ToString('o'); command=$p.CommandLine}} | ConvertTo-Json -Compress }}");
++    let output = windows_command("powershell.exe").args(["-NoProfile", "-NonInteractive", "-Command", &script]).output().ok()?;
++    if !output.status.success() { return None; }
++    let value: Value = serde_json::from_slice(&output.stdout).ok()?;
++    Some((value["started_at"].as_str()?.into(), value["command"].as_str()?.into()))
++}
+diff --git a/crates/cadabra/src/lib.rs b/crates/cadabra/src/lib.rs
+index 557b0b1..78f4579 100644
+--- a/crates/cadabra/src/lib.rs
++++ b/crates/cadabra/src/lib.rs
+@@ -2,6 +2,7 @@
+ #![forbid(unsafe_code)]
+ pub mod adapters;
+ pub mod background;
++pub mod local;
+ pub mod relay;
+ 
+ use abra_core::{
+@@ -30,18 +31,21 @@ use serde_json::{json, Map, Value};
+ use std::{
+     collections::BTreeMap,
+     fs::{self, File, OpenOptions},
+-    io::{Read, Write},
++    io::Read,
+     path::{Path, PathBuf},
+     sync::Arc,
+     time::Duration,
+ };
+ use tokio::{
+     io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader},
+-    net::{UnixListener, UnixStream},
+     sync::{watch, Mutex, Semaphore},
+     task::JoinHandle,
+ };
+ 
++#[cfg(unix)]
++use std::io::Write;
++use local::{LocalListener as UnixListener, LocalStream as UnixStream};
++
+ pub type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
+ const MAX_CONTROL_LINE: u64 = 1024 * 1024;
+ const MAX_OBSERVED_READ: u64 = 1024 * 1024;
+@@ -819,7 +823,7 @@ impl Daemon {
+         Ok(())
+     }
+ 
+-    async fn serve_watch(&self, write: &mut tokio::net::unix::OwnedWriteHalf) -> Result<()> {
++    async fn serve_watch(&self, write: &mut (impl tokio::io::AsyncWrite + Unpin)) -> Result<()> {
+         use std::io::{Read, Seek, SeekFrom};
+         let path = self.root.join("net/events.ndjson");
+         let mut sent = 0u64;
+diff --git a/crates/cadabra/src/local.rs b/crates/cadabra/src/local.rs
+new file mode 100644
+--- /dev/null
++++ b/crates/cadabra/src/local.rs
+@@ -0,0 +1,79 @@
++//! Local control transport: Unix sockets or owner-only Windows named pipes.
++#[cfg(unix)]
++pub use tokio::net::{UnixListener as LocalListener, UnixStream as LocalStream};
++
++#[cfg(windows)]
++mod windows {
++    use interprocess::{
++        local_socket::{tokio::{prelude::*, Listener, Stream, RecvHalf, SendHalf}, GenericNamespaced, ListenerOptions, ToNsName},
++        os::windows::{local_socket::ListenerOptionsExt, security_descriptor::SecurityDescriptor},
++    };
++    use std::{io, path::Path};
++
++    fn name(path: &Path) -> io::Result<String> {
++        // Canonicalize the existing parent to give all callers the same pipe.
++        let parent = path.parent().ok_or_else(|| io::Error::other("missing control root"))?.canonicalize()?;
++        let text = parent.to_string_lossy().to_lowercase();
++        Ok(format!("abra-{}", abra_core::cas::Hash::of(text.as_bytes())))
++    }
++
++    pub struct LocalListener(Listener);
++    pub struct LocalStream(Stream);
++    impl LocalListener {
++        pub fn bind(path: &Path) -> io::Result<Self> {
++            let name = name(path)?;
++            let sddl = widestring::U16CString::from_str("D:P(D;;GA;;;NU)(A;;GA;;;OW)").map_err(io::Error::other)?;
++            let sd = SecurityDescriptor::deserialize(&sddl)?;
++            Ok(Self(ListenerOptions::new().name(name.to_ns_name::<GenericNamespaced>()?)
++                .security_descriptor(sd).create_tokio()?))
++        }
++        pub async fn accept(&self) -> io::Result<(LocalStream, ())> {
++            Ok((LocalStream(self.0.accept().await?), ()))
++        }
++    }
++    impl LocalStream {
++        pub async fn connect(path: impl AsRef<Path>) -> io::Result<Self> {
++            let name = name(path.as_ref())?;
++            Ok(Self(Stream::connect(name.to_ns_name::<GenericNamespaced>()?).await?))
++        }
++        pub fn into_split(self) -> (RecvHalf, SendHalf) { self.0.split() }
++    }
++}
++#[cfg(windows)]
++pub use windows::{LocalListener, LocalStream};
++
++#[cfg(all(test, windows))]
++mod tests {
++    use super::*;
++    use tokio::io::{AsyncReadExt, AsyncWriteExt};
++
++    #[tokio::test]
++    async fn pipe_round_trip_isolated_by_root() {
++        let root = tempfile::tempdir().unwrap();
++        let other = tempfile::tempdir().unwrap();
++        let socket = root.path().join("cadabra.sock");
++        let listener = LocalListener::bind(&socket).unwrap();
++        assert!(LocalListener::bind(&socket).is_err());
++        assert!(LocalStream::connect(other.path().join("cadabra.sock")).await.is_err());
++        let server = tokio::spawn(async move {
++            for _ in 0..2 {
++                let (stream, _) = listener.accept().await.unwrap();
++                let (mut read, mut write) = stream.into_split();
++                let mut request = [0; 4];
++                read.read_exact(&mut request).await.unwrap();
++                assert_eq!(&request, b"ping");
++                write.write_all(b"pong").await.unwrap();
++                write.flush().await.unwrap();
++            }
++        });
++        for _ in 0..2 {
++            let (mut read, mut write) = LocalStream::connect(&socket).await.unwrap().into_split();
++            write.write_all(b"ping").await.unwrap();
++            write.flush().await.unwrap();
++            let mut response = [0; 4];
++            read.read_exact(&mut response).await.unwrap();
++            assert_eq!(&response, b"pong");
++        }
++        server.await.unwrap();
++    }
++}

@@ -20,8 +20,11 @@ test('automatic browser mode uses the sandbox desktop and falls back when absent
     assert.equal((await desktopEnvironment({}, 'darwin', directory)).available, true);
     assert.equal((await desktopEnvironment({ DISPLAY: ':5' }, 'linux', directory)).env.DISPLAY, ':5');
     assert.equal((await desktopEnvironment({ WAYLAND_DISPLAY: 'wayland-0', XDG_RUNTIME_DIR: directory }, 'linux', directory)).available, true);
-    await new Promise<void>(resolve => socket.listen(path.join(directory, 'X1'), resolve));
-    assert.equal((await desktopEnvironment({}, 'linux', directory)).env.DISPLAY, ':1');
+    assert.equal((await desktopEnvironment({}, 'win32', directory)).available, true);
+    if (process.platform !== 'win32') {
+      await new Promise<void>(resolve => socket.listen(path.join(directory, 'X1'), resolve));
+      assert.equal((await desktopEnvironment({}, 'linux', directory)).env.DISPLAY, ':1');
+    }
   } finally {
     if (socket.listening) await new Promise<void>(resolve => socket.close(() => resolve()));
     await rm(directory, { recursive: true, force: true });
@@ -66,7 +69,7 @@ test('Chrome startup waits for its debugging endpoint and stops when the process
   } finally { await new Promise<void>(resolve => server.close(() => resolve())); }
 });
 
-test('discovery selects Chrome on the agent display and ignores other agents and headless processes', async () => {
+test('discovery selects Chrome on the agent display and ignores other agents and headless processes', { skip: process.platform === 'win32' }, async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'abra-processes-'));
   try {
     for (const [pid, display, port, extra] of [['1', ':4', '9226', ''], ['2', ':5', '9227', ''], ['3', ':4', '9228', '--headless=new'], ['4', ':4', '9229', '--type=renderer']]) {

@@ -20,7 +20,7 @@ test('connection command requires HTTPS and keeps the ticket out of the download
   assert.throws(() => connectionCommand(ticket, 'https://user:secret@example.com/install'));
 });
 
-test('connection command fails when the installer download fails', async () => {
+test('connection command fails when the installer download fails', { skip: process.platform === 'win32' }, async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'abra-bootstrap-download-'));
   try {
     await writeFile(path.join(root, 'curl'), '#!/bin/sh\nexit 22\n', { mode: 0o755 });
@@ -29,7 +29,7 @@ test('connection command fails when the installer download fails', async () => {
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
-test('bootstrap installs once, pairs again without downloading, and rejects a corrupt archive', async () => {
+test('bootstrap installs once, pairs again without downloading, and rejects a corrupt archive', { skip: process.platform === 'win32' }, async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'abra-bootstrap-test-'));
   try {
     const bin = path.join(root, 'bin'), mock = path.join(root, 'mock'), staged = path.join(root, 'package/abra-teleport/scripts');

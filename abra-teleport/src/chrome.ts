@@ -3,12 +3,15 @@ import { readFile, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { paths } from './paths.js';
+import { requireDiskSpace } from './disk-space.js';
+import { assertManagedProfile } from './profile-safety.js';
 import { browserCandidates, browserEndpoint, desktopEnvironment, waitForBrowser } from './browser-discovery.js';
 import { executableOnPath, exists, isProcessAlive, processIdentity, readJson, secureDir, sleep, writeJson } from './util.js';
 
-async function chromeBinary() {
+export async function chromeBinary() {
   const candidates = [
     process.env.CHROME_BIN,
+    ...windowsChromeCandidates(),
     process.platform === 'darwin' ? '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome' : null,
     await executableOnPath('google-chrome'),
     await executableOnPath('google-chrome-stable'),
@@ -57,6 +60,8 @@ export function matchesBrowser(handoff, chrome) {
 
 export async function ensureChrome({ headless, proxy, reuse = true }: { headless?: boolean; proxy?: unknown; reuse?: boolean } = {}) {
   const requestedProxy = proxyOption(proxy);
+  await assertManagedProfile(paths().chromeProfile);
+  await requireDiskSpace(paths().chromeProfile);
   const current = await chromeStatus();
   if (current) {
     if (requestedProxy && current.proxy !== requestedProxy) throw new Error('close the managed Chrome window before changing its network route');
@@ -96,7 +101,7 @@ export async function ensureChrome({ headless, proxy, reuse = true }: { headless
     ...(process.platform === 'linux' ? ['--disable-dev-shm-usage'] : []),
     'about:blank'
   ];
-  const child = spawn(binary, args, { detached: true, stdio: ['ignore', log, log], env: { ...process.env, ...desktop.env } });
+  const child = spawn(binary, args, { detached: true, windowsHide: true, stdio: ['ignore', log, log], env: { ...process.env, ...desktop.env } });
   child.unref();
   closeSync(log);
   let port;
@@ -130,4 +135,11 @@ export async function stopChrome() {
   process.kill(state.pid, 'SIGTERM');
   for (let attempt = 0; attempt < 100 && await isProcessAlive(state.pid); attempt++) await sleep(50);
   return { stopped: !await isProcessAlive(state.pid) };
+}
+
+export function windowsChromeCandidates(platform = process.platform, env = process.env) {
+  if (platform !== 'win32') return [];
+  return [env.PROGRAMFILES, env['PROGRAMFILES(X86)'], env.LOCALAPPDATA]
+    .filter((root): root is string => Boolean(root))
+    .map(root => path.join(root, 'Google', 'Chrome', 'Application', 'chrome.exe'));
 }

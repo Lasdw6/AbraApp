@@ -2,12 +2,15 @@
   "name": "abra-app",
   "private": true,
   "scripts": {
-    "test": "npm --prefix abra-teleport test && npm --prefix desktop test",
+    "test": "npm --prefix abra-teleport test && npm --prefix desktop test && npm run test:build-safety",
     "desktop": "npm --prefix desktop run desktop",
-    "build": "npm --prefix desktop run desktop:build",
-    "build:windows": "npm --prefix desktop run desktop:build:windows",
+    "build": "tsx scripts/guard-build.ts npm --prefix desktop run desktop:build",
+    "build:windows": "tsx scripts/guard-build.ts npm --prefix desktop run desktop:build:windows",
     "check": "npm run build:cli && npm --prefix abra-teleport run check && npm --prefix desktop run typecheck && tsc -p tsconfig.tools.json",
-    "build:cli": "npm --prefix abra-teleport run build"
+    "build:cli": "npm --prefix abra-teleport run build",
+    "build:windows:wsl": "tsx scripts/guard-build.ts npm --prefix desktop run desktop:build:windows:wsl",
+    "setup:windows": "tsx scripts/build-windows-core.ts && npm run build:cli",
+    "test:build-safety": "tsx --test scripts/test/*.test.ts"
   },
   "type": "module",
   "workspaces": [

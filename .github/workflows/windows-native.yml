@@ -1,0 +1,49 @@
+name: Native Windows
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'abra-teleport/**'
+      - 'desktop/**'
+      - 'scripts/**'
+      - 'patches/**'
+      - 'package*.json'
+      - '.github/workflows/windows-native.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-2022
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: rustup update stable --no-self-update
+      - run: rustup default stable
+      - run: npm ci
+      - run: npm run setup:windows
+      - run: npm run check
+      - run: npm test
+      - run: npm run build:windows
+      - name: Test native IPC and browser round trips
+        env:
+          ABRA_TELEPORT_BROWSER_INTEGRATION: '1'
+          ABRA_TELEPORT_TRANSPORT: tcp
+          ABRA_BIN: ${{ github.workspace }}/abra/target/release/abra.exe
+        run: node --import tsx --test abra-teleport/test/browser-integration.test.ts
+      - name: Test bundled Electron interpreter and adapters
+        env:
+          ABRA_WINDOWS_PACKAGED_TEST: '1'
+        run: npm --prefix desktop test
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Abra-Teleport-Windows-native-x64
+          path: desktop/dist/windows-native/*-Setup.exe
+          if-no-files-found: error

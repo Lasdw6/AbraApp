@@ -6,6 +6,7 @@ import { browserMode, chromeStatus, ensureChrome, matchesBrowser, stopChrome as 
 import { ensureChromeProfile, selectedBrowserState } from './browser-source.js';
 import { chooseInbox } from './inbox.js';
 import { paths } from './paths.js';
+import { requireDiskSpace } from './disk-space.js';
 import { loadState, updateState } from './state.js';
 import { addBrowserSession, browserSessions, removeBrowserSession, selectBrowserSession } from './browser-sessions.js';
 import { exists, flagList, readJson, run, runInteractive, sleep } from './util.js';
@@ -109,6 +110,8 @@ export async function restoreTabLocations(cdpUrl, browserContextId, tabs: Browse
 }
 
 export async function browserPrepare(flags) {
+  await requireDiskSpace(paths().home);
+  await requireDiskSpace(paths().browserData);
   const profile = await ensureChromeProfile(flags.profile);
   if (!profile && flags.profile !== 'active') throw new Error('select a Chrome profile or the Abra capture window');
   const url = String(flags.url || '');
@@ -158,6 +161,8 @@ export async function browserPrepare(flags) {
 }
 
 export async function browserSend(peer, flags, direction = 'up') {
+  await requireDiskSpace(paths().home);
+  await requireDiskSpace(paths().browserData);
   await ensureDaemon();
   const profile = typeof flags.profile === 'string' ? await ensureChromeProfile(flags.profile) : null;
   const chrome = profile ? null : await ensureChrome({ headless: browserMode(flags) });
@@ -190,6 +195,8 @@ export async function browserSend(peer, flags, direction = 'up') {
 }
 
 export async function browserReceive(requestedId, flags) {
+  await requireDiskSpace(paths().home);
+  await requireDiskSpace(paths().browserData);
   await ensureDaemon();
   if (flags.headless === true && flags.headed === true) throw new Error('choose either --headless or --headed');
   const chrome = await ensureChrome({ headless: browserMode(flags), proxy: flags.proxy });

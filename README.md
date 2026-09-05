@@ -2,7 +2,7 @@
 
 A desktop app for moving selected browser sessions between your laptop and an agent’s sandbox.
 
-[Download Abra Teleport for Mac or Windows](https://abra.vividh.lol/). The Windows preview uses WSL 2; see [Windows setup](WINDOWS.md).
+[Download Abra Teleport for Mac or Windows](https://abra.vividh.lol/). For native Windows development and installer builds, see [Windows setup](WINDOWS.md).
 
 The agent CLI installer is served from `https://abra.vividh.lol/install.sh`.
 
@@ -21,7 +21,7 @@ npm ci
 npm run build
 ```
 
-Requires Node 22+, Rust 1.91+, and Python 3 for Linux observation. The standard desktop build targets macOS. For the Windows preview through WSL 2, see [Windows setup](WINDOWS.md); `npm run build:windows` creates the setup archive using a Linux x64 core binary. `desktop/` contains Electron and React; `abra-teleport/` contains the internal CLI; `abra/` pins the core engine as a submodule.
+Requires Node 22+, Rust 1.91+, and Python 3 for Linux observation. Desktop release builds require 8 GiB free and stop when disk space falls below a 2 GiB reserve. The standard desktop build targets macOS. For native Windows, see [Windows setup](WINDOWS.md); `npm run build:windows` creates a Windows x64 installer with a native core binary. The legacy WSL archive is available through `npm run build:windows:wsl`. `desktop/` contains Electron and React; `abra-teleport/` contains the internal CLI; `abra/` pins the core engine as a submodule.
 
 The build creates the app under `desktop/dist/` and installer assets under `abra-teleport/dist/`. It includes the builder’s native binary. Put additional native binaries at `abra-teleport/dist/native/<platform>-<arch>/abra` before building to ship those platforms without source compilation. Linux x64 release builds use musl to support different Linux distributions.
 

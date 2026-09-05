@@ -9,9 +9,10 @@
     "desktop": "npm --prefix ../abra-teleport run build && npm run build && electron .",
     "desktop:build": "npm run typecheck && cargo build --release --manifest-path ../abra/Cargo.toml -p abra-cli && bash ../abra-teleport/scripts/package-agent.sh && npm run build && electron-builder --mac dir",
     "typecheck": "tsc --noEmit && tsc -p tsconfig.electron.json --noEmit",
-    "desktop:build:windows": "npm run typecheck && npm run build && tsx scripts/package-windows.ts",
+    "desktop:build:windows": "npm run typecheck && tsx ../scripts/build-windows-core.ts --release && npm --prefix ../abra-teleport run build && npm run build && tsx scripts/package-windows.ts",
     "build:electron": "tsx scripts/build-electron.ts",
-    "test": "tsx --test test/*.test.ts"
+    "test": "tsx --test test/*.test.ts",
+    "desktop:build:windows:wsl": "npm run typecheck && npm run build && tsx scripts/package-windows-wsl.ts"
   },
   "dependencies": {
     "react": "19.1.0",

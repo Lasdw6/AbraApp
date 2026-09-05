@@ -19,6 +19,7 @@ function createConnections({ home, runtime }: { home: string; runtime: () => Run
     return new Promise<T>((resolve, reject) => {
       const child = spawn(rt.node, [path.join(rt.wrapper, 'bin/abra-teleport.js'), ...args], {
         timeout,
+        windowsHide: true,
         stdio: ['pipe', 'pipe', 'pipe'],
         env: { ...process.env, ...(rt.asNode ? { ELECTRON_RUN_AS_NODE: '1' } : {}), ABRA_BIN: rt.abra,
           ABRA_BROWSER_ADAPTER: rt.adapter, ABRA_OBSERVER: rt.observer, ABRA_TELEPORT_DESKTOP: '1',

@@ -39,7 +39,7 @@ jobs:
           if ($errors.Count) { $errors | Format-List; exit 1 }
           bash -n scripts/install-wsl.sh scripts/launch-wsl.sh
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
-      - run: npm run build:windows
+      - run: npm run build:windows:wsl
       - uses: actions/upload-artifact@v4
         with:
           name: Abra-Teleport-Windows-WSL-x64

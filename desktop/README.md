@@ -26,3 +26,7 @@ ABRA_SHOT_LIGHT=1 npx electron scripts/screenshot.cjs out.png pick   # light the
 The build refreshes the embedded Abra binary, wrapper, browser adapter, shared adapter runtime, observer, and CLI installer. Build output is under `dist/mac-arm64/Abra Teleport.app` on Apple Silicon.
 
 The installer is hosted on versioned AbraApp GitHub Releases and is also exportable as a local archive. Remote connectivity requires outbound Abra transport access from the sandbox.
+
+For native Windows development, run `npm run setup:windows` from the repository
+root, then `npm run desktop`. Build the Windows x64 NSIS installer with
+`npm run build:windows`. See [Windows setup](../WINDOWS.md).

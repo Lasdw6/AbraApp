@@ -1,37 +1,82 @@
-# Windows preview (WSL)
+# Native Windows setup
 
-Abra Teleport can run as a desktop window on Windows through WSL 2 and WSLg. This is a Linux build running locally on your Windows computer, not a native Windows executable.
+Abra Teleport runs directly on Windows x64 with Electron, a native Rust engine,
+and Windows named pipes. WSL, Bash, and Python are not required on the laptop.
+The paired agent still runs in a Linux sandbox.
 
-## Install
+## Develop
 
-Requires Intel/AMD 64-bit Windows 11 or Windows 10 build 19044+, hardware virtualization, and internet access. The setup uses Ubuntu 24.04. Windows ARM is not packaged yet.
+Install Node.js 22+, Git, Rust 1.91+ with the `x86_64-pc-windows-msvc` toolchain,
+and Visual Studio Build Tools with **Desktop development with C++** (including
+the Windows SDK). Install Google Chrome for the managed capture window.
 
-1. [Download the Windows setup](https://github.com/Lasdw6/AbraApp/releases/download/v0.3.0-rc.3/Abra-Teleport-Windows-WSL-x64.zip), then extract `Abra-Teleport-Windows-WSL-x64.zip` into a local folder. Keep all extracted files together.
-2. Open PowerShell in the extracted `Abra-Teleport-Windows-WSL` folder and run:
+Run in PowerShell from the repository root:
 
-   ```powershell
-   powershell -NoProfile -ExecutionPolicy Bypass -File .\Setup-Windows.ps1
-   ```
+```powershell
+git submodule update --init --recursive
+npm ci
+npm run setup:windows
+npm run desktop
+```
 
-3. If WSL needs installation, finish the Ubuntu username/password prompt. Windows may require administrator access or a restart. Rerun the same setup after restarting.
-4. Enter your Ubuntu password when setup installs dependencies. Open **Abra Teleport** from the desktop shortcut.
+`setup:windows` applies the checked-in Windows engine patch and builds
+`abra/target/debug/abra.exe`. It can be run again safely. The patch remains in
+`patches/abra-windows.patch` until the changes are incorporated into the upstream
+core submodule. This intentionally leaves the submodule working tree modified;
+no separate submodule commit is required to reproduce the Windows build.
 
-If you already have a differently named Ubuntu 24.04 distribution, pass `-Distribution YourDistroName`. Setup checks that it uses WSL 2 and has desktop support. It does not change your default distribution.
+Use **Open Abra browser**, sign in to the sites you want to transfer, then refresh
+tabs in the app. Windows uses a separate Chrome profile under
+`%USERPROFILE%\.abra-teleport\chrome-profile`; it does not read your regular
+Chrome profile. Set `CHROME_BIN` to a Chrome executable if it is installed in a
+custom location. App state defaults to `%USERPROFILE%\.abra-teleport`.
 
-The setup verifies the package checksums, installs the app and its Node/Rust runtime under `/opt/abra-teleport`, and installs Chrome inside Ubuntu. The app runs as your normal Linux user, with the Chromium sandbox enabled. No Rust compiler or separate Node installation is needed.
+## Disk and cookie safety
 
-This preview is unsigned. The PowerShell command bypasses script execution policy for that process only; it does not change your saved policy. Inspect the scripts before running them if needed.
+Native Rust builds require at least 8 GiB free and stop their process tree if
+available space drops below a 2 GiB reserve. The guard checks the build, Cargo,
+and temporary-file volumes. These checks reduce the risk of disrupting Chrome
+and other applications; they cannot prevent another program from filling the disk.
+Abra also refuses new browser capture/import operations below 1 GiB free.
 
-## Use
+Managed Chrome profiles must not overlap the regular Chrome data directory,
+including through Windows junctions. Session files are written to a new private
+file, flushed, and atomically replaced so a failed write retains the old file.
 
-- Click **Open Abra browser**, visit a site and sign in, then refresh tabs and select the tab and cookies to send. Cookies and storage come from that selected tab in the Abra browser. Regular Windows Chrome/Edge profiles are not imported.
-- Create a connection command in **Connect your agent** and run it inside the agent's Linux sandbox. Daytona and Firecracker use the same internal CLI. You do not need provider API keys or host access; the sandbox must permit Abra's network traffic.
-- Keep Windows and WSL running while a transfer is in progress. If WSLg is missing, run `wsl --update`, then `wsl --shutdown` in PowerShell and reopen the app.
+A Google sign-out does not by itself prove cookie corruption. This setup does
+not delete, reset, or repair regular Chrome cookies automatically. A locked
+cookie database cannot be checked safely until Chrome releases it; back up a
+closed profile before any recovery attempt. Session tokens rejected by Google
+cannot be repaired by editing the local cookie database.
 
-To uninstall, close the app and run `sudo rm -rf /opt/abra-teleport` inside Ubuntu, remove `~/.local/bin/abra-teleport` and `~/.local/share/applications/abra-teleport.desktop`, then delete the Windows desktop shortcut. Your state in `~/.abra-teleport`, workspaces, and Chrome remain unless you separately remove them.
+## Build an installer
 
-## Build and validation
+```powershell
+npm run build:windows
+```
 
-From the repository, run `npm ci` followed by `npm run build:windows` on macOS or Linux. Build the Rust core first (`cargo build --locked --release --manifest-path abra/Cargo.toml -p abra-cli`). On macOS, provide a Linux x64 Abra binary in `abra-teleport/dist/native/linux-x64/abra` or set `ABRA_LINUX_BIN` to it. The packager rejects a binary for the wrong operating system or CPU, bundles checksum-pinned Node 22.23.2, and writes the setup zip under `desktop/dist/`.
+This builds the release engine and creates a per-user NSIS installer under
+`desktop/dist/windows-native/`. The installer bundles Electron's Node runtime,
+the native engine, the adapters, and the verified Linux agent archive pinned by
+`docs/install.sh`. The build needs internet access to download release assets.
+The installed app does not require Node or Rust on the destination computer.
+Local builds are unsigned; configure release code signing before public distribution.
 
-The browser integration suite exercises the managed browser against real Chrome, including selected-tab session storage, cookie selection, navigation checks, and preparing a handoff. Existing tests cover pairing and browser round trips and connection loss/recovery. The packaged application also passed nine live checks on a fresh Ubuntu 24.04 EC2 instance: bundled Node/core, pairing command, managed browser interface, headed Chrome, tab discovery, cookie inventory, handoff preparation, and cleanup. A packaging resource collision found during this test was fixed; the build now verifies the packaged core against its source checksum. Windows first-run prompts, WSLg windows, and the desktop shortcut still require validation on a Windows computer. Building an archive alone does not verify those behaviors.
+## Verify
+
+```powershell
+npm run check
+npm test
+$env:ABRA_TELEPORT_BROWSER_INTEGRATION = '1'
+npm test
+```
+
+After building the installer, verify its bundled runtime with
+`$env:ABRA_WINDOWS_PACKAGED_TEST = '1'; npm --prefix desktop test`.
+
+Browser integration tests use temporary profiles and synthetic session data.
+Unix socket discovery and Bash installer tests run on Unix and are skipped on
+Windows. Windows process identity and browser discovery tests run locally.
+
+The previous WSL distribution is still available through
+`npm run build:windows:wsl`; see [legacy WSL setup](WINDOWS-WSL.md).

@@ -9,7 +9,7 @@ function runtime() {
     const root = path.join(process.resourcesPath, 'Runtime');
     return {
       wrapper: path.join(root, 'wrapper'),
-      abra: path.join(root, 'abra'),
+      abra: path.join(root, process.platform === 'win32' ? 'abra.exe' : 'abra'),
       adapter: path.join(root, 'browser-session'),
       observer: path.join(root, 'observer.py'),
       node: process.platform === 'linux' ? path.join(root, 'node/bin/node') : process.execPath,
@@ -18,7 +18,7 @@ function runtime() {
   }
   return {
     wrapper: path.resolve(__dirname, '../../../abra-teleport/build'),
-    abra: path.resolve(__dirname, '../../../abra/target/debug/abra'),
+    abra: path.resolve(__dirname, '../../../abra/target/debug', process.platform === 'win32' ? 'abra.exe' : 'abra'),
     adapter: path.resolve(__dirname, '../../../abra/adapters/browser-session'),
     observer: path.resolve(__dirname, '../../../abra/adapters/sandbox/collector/observer.py'),
     node: process.execPath,
@@ -53,6 +53,7 @@ function run(executable: string, args: string[], options: { cwd?: string; env?: 
   return new Promise<string>((resolve, reject) => {
     const child = spawn(executable, args, {
       cwd: options.cwd,
+      windowsHide: true,
       env: { ...process.env, ...options.env },
       stdio: ['ignore', 'pipe', 'pipe'],
     });
@@ -108,6 +109,7 @@ function createWindow() {
 
 app.whenReady().then(() => {
   app.setName('Abra Teleport');
+  if (process.platform === 'win32') app.setAppUserModelId('dev.abra.teleport');
   createWindow();
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
 });

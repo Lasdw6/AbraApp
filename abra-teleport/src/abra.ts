@@ -11,13 +11,14 @@ let resolvedBinary: string | undefined;
 
 export async function abraBinary() {
   if (resolvedBinary) return resolvedBinary;
+  const name = process.platform === 'win32' ? 'abra.exe' : 'abra';
   const candidates = [
     process.env.ABRA_BIN,
-    path.join(appRoot, 'runtime', `${process.platform}-${process.arch}`, 'abra'),
-    path.resolve(appRoot, '..', 'abra', 'target', 'release', 'abra'),
-    path.resolve(appRoot, '..', 'abra', 'target', 'debug', 'abra'),
-    path.resolve(appRoot, '../..', 'abra/target/release/abra'),
-    path.resolve(appRoot, '../..', 'abra/target/debug/abra'),
+    path.join(appRoot, 'runtime', `${process.platform}-${process.arch}`, name),
+    path.resolve(appRoot, '..', 'abra', 'target', 'release', name),
+    path.resolve(appRoot, '..', 'abra', 'target', 'debug', name),
+    path.resolve(appRoot, '../..', 'abra/target/release', name),
+    path.resolve(appRoot, '../..', 'abra/target/debug', name),
     await executableOnPath('abra')
   ].filter((value): value is string => typeof value === 'string' && value.length > 0);
   for (const candidate of candidates) {
@@ -27,7 +28,7 @@ export async function abraBinary() {
 }
 
 function daemonEnv() {
-  return { ABRA_BROWSER_DATA_DIR: paths().browserData };
+  return { ABRA_BROWSER_DATA_DIR: paths().browserData, ABRA_NODE_BIN: process.execPath };
 }
 
 export async function abra<T = any>(args: string[], options: RunOptions = {}): Promise<T> {
@@ -94,6 +95,7 @@ export async function ensureDaemon() {
   if (transport) args.push('--transport', transport);
   const child = spawn(binary, args, {
     detached: true,
+    windowsHide: true,
     stdio: ['ignore', log, log],
     env: { ...process.env, ...daemonEnv() }
   });

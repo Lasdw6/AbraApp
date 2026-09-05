@@ -1,6 +1,6 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { execFile, spawn } from 'node:child_process';
-import { access, chmod, mkdir, open, readFile, rename, stat } from 'node:fs/promises';
+import { access, chmod, mkdir, open, readFile, rename, stat, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { promisify } from 'node:util';
 
@@ -30,16 +30,16 @@ export async function readJson<T = any>(file: string, fallback: unknown = undefi
 
 export async function writeJson(file: string, value: unknown) {
   await secureDir(path.dirname(file));
-  const temporary = `${file}.tmp-${process.pid}-${Date.now()}`;
-  const handle = await open(temporary, 'wx', 0o600);
+  const temporary = `${file}.tmp-${randomUUID()}`;
   try {
-    await handle.writeFile(`${JSON.stringify(value, null, 2)}\n`);
-    await handle.sync();
-  } finally {
-    await handle.close();
-  }
-  await rename(temporary, file);
-  await chmod(file, 0o600);
+    const handle = await open(temporary, 'wx', 0o600);
+    try {
+      await handle.writeFile(`${JSON.stringify(value, null, 2)}\n`);
+      await handle.chmod(0o600);
+      await handle.sync();
+    } finally { await handle.close(); }
+    await rename(temporary, file);
+  } finally { await rm(temporary, { force: true }).catch(() => {}); }
 }
 
 export function sha256(bytes) {
@@ -60,6 +60,7 @@ export async function run(command: string, args: string[], options: RunOptions =
       cwd: options.cwd,
       env: { ...process.env, ...options.env },
       maxBuffer: options.maxBuffer || 16 * 1024 * 1024,
+      windowsHide: true,
       timeout: options.timeout
     });
   } catch (error) {
@@ -90,7 +91,7 @@ export function runInteractive(command: string, args: string[], options: RunOpti
 }
 
 export async function executableOnPath(name) {
-  try { return (await run('/usr/bin/env', ['which', name])).stdout.trim(); }
+  try { return (await run(process.platform === 'win32' ? 'where.exe' : '/usr/bin/env', process.platform === 'win32' ? [name] : ['which', name])).stdout.trim().split(/\r?\n/)[0]; }
   catch { return null; }
 }
 
@@ -102,11 +103,13 @@ export async function isProcessAlive(pid: number | undefined) {
 
 export async function processCommand(pid: number) {
   if (!await isProcessAlive(pid)) return '';
+  if (process.platform === 'win32') return (await windowsProcessIdentity(pid))?.command || '';
   return (await run('/bin/ps', ['-p', String(pid), '-o', 'command='])).stdout.trim();
 }
 
 export async function processIdentity(pid: number | undefined) {
   if (!await isProcessAlive(pid)) return null;
+  if (process.platform === 'win32') return windowsProcessIdentity(pid!);
   const stdout = (await run('/bin/ps', ['-p', String(pid), '-o', 'lstart=', '-o', 'command='])).stdout.trim();
   const match = stdout.match(/^(\S+\s+\S+\s+\d+\s+\d+:\d+:\d+\s+\d+)\s+([\s\S]+)$/);
   if (!match) throw new Error(`could not read process identity for PID ${pid}`);
@@ -138,4 +141,14 @@ export function parseArgs(argv: string[]) {
 export function flagList(value) {
   if (value === undefined || value === true) return [];
   return (Array.isArray(value) ? value : [value]).flatMap(item => String(item).split(',')).map(item => item.trim()).filter(Boolean);
+}
+
+async function windowsProcessIdentity(pid: number): Promise<{ started_at: string; command: string } | null> {
+  if (!Number.isSafeInteger(pid) || pid <= 0) return null;
+  const script = `[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new(); $p = Get-CimInstance Win32_Process -Filter 'ProcessId = ${pid}'; if ($p) { @{started_at=$p.CreationDate.ToUniversalTime().ToString('o'); command=$p.CommandLine} | ConvertTo-Json -Compress }`;
+  const { stdout } = await run('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script]);
+  if (!stdout.trim()) return null;
+  const identity = JSON.parse(stdout);
+  if (typeof identity.started_at !== 'string' || typeof identity.command !== 'string') throw new Error(`could not read process identity for PID ${pid}`);
+  return identity;
 }
