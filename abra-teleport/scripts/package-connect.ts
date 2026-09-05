@@ -3,7 +3,7 @@ import { readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { appRoot } from '../src/paths.js';
 
-const base = process.env.ABRA_TELEPORT_RELEASE_URL || 'https://github.com/Lasdw6/AbraApp/releases/download/v0.3.0-rc.1';
+const base = process.env.ABRA_TELEPORT_RELEASE_URL || 'https://github.com/Lasdw6/AbraApp/releases/download/v0.3.0-rc.2';
 const output = path.resolve(appRoot, '../dist');
 if (base) {
   const url = new URL(base.replace(/\/?$/, '/'));

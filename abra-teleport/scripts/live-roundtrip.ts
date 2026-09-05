@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Live test orchestration uses SSH only for fixture setup and assertions.
-// Pairing, controls, and browser/workspace transfers all use Abra over iroh.
+// Pairing, controls, and browser transfers all use Abra over iroh.
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { mkdir, readFile, writeFile, appendFile } from 'node:fs/promises';
@@ -9,7 +9,7 @@ import path from 'node:path';
 import { abra, ensureDaemon, stopDaemon } from '../src/abra.js';
 import { agentTicket, listAgents, agentRemote } from '../src/agent.js';
 import { browserSend, browserReceive } from '../src/browser.js';
-import { codexSend, codexReceive } from '../src/codex.js';
+import { checkConnection } from '../src/connection-health.js';
 import { sandboxCommand } from '../src/sandbox.js';
 import { ensureChrome, stopChrome } from '../src/chrome.js';
 import { run, redact } from '../src/util.js';
@@ -22,7 +22,6 @@ const root = path.resolve(config.report_dir);
 await mkdir(root, { recursive: true, mode: 0o700 });
 process.env.ABRA_TELEPORT_HOME = path.join(root, 'local');
 process.env.ABRA_TELEPORT_ABRA_ROOT = path.join(root, 'local/abra');
-process.env.CODEX_HOME = path.join(root, 'codex');
 process.env.ABRA_TELEPORT_INSTALL_URL = config.install_url;
 delete process.env.ABRA_TELEPORT_TRANSPORT;
 const quote = value => `'${String(value).replaceAll("'", "'\\''")}'`;
@@ -34,7 +33,7 @@ const remote = script => new Promise<string>((resolve, reject) => {
   child.once('error', reject);
   child.once('close', code => { clearTimeout(timer); code === 0 ? resolve(out) : reject(new Error(redact(err || out || `remote exit ${code}`))); });
   child.stdin.on('error', () => {});
-  child.stdin.end(`set -euo pipefail\nexport PATH="$HOME/.local/bin:$PATH"\nexport ABRA_TELEPORT_HOME=/tmp/teleport-live/state\nexport CODEX_HOME=/tmp/teleport-live/codex\n${script}\n`);
+  child.stdin.end(`set -euo pipefail\nexport PATH="$HOME/.local/bin:$PATH"\nexport ABRA_TELEPORT_HOME=/tmp/teleport-live/state\n${script}\n`);
 });
 const save = () => writeFile(path.join(root, 'report.json'), JSON.stringify(report, null, 2) + '\n');
 const check = async (name, condition) => { report.checks[name] = Boolean(condition); await save(); assert.ok(condition, name); console.log('PASS', name); };
@@ -76,30 +75,8 @@ try {
   await check('browser_local_storage_returned',storage?.some(x=>x.name==='typed'&&x.value==='remote typed')&&storage?.some(x=>x.name==='roundtrip'&&x.value==='local'));
   await check('browser_tab_returned',state.tabs.some(x=>x.url===url));
   await command(['browser','revoke']);await command(['browser','close']);
-  const version=(await run('codex',['--version'])).stdout.trim().split(/\s+/).at(-1);
-  const remoteVersion=(await remote('codex --version')).trim().split(/\s+/).at(-1);
-  await check('codex_versions_match',version===remoteVersion);
-  const id='123e4567-e89b-42d3-a456-426614174222';
-  const sessionName=`sessions/2026/09/05/rollout-2026-09-05T10-00-00-${id}.jsonl`;
-  const localSession=path.join(process.env.CODEX_HOME,sessionName);
-  const workspace=path.join(root,'workspace');
-  await mkdir(path.dirname(localSession),{recursive:true});await mkdir(workspace,{recursive:true});
-  await writeFile(path.join(workspace,'marker.txt'),'before\n');
-  await writeFile(localSession,JSON.stringify({timestamp:'2026-09-05T10:00:00Z',type:'session_meta',payload:{id,session_id:id,cwd:workspace,cli_version:version,model_provider:'openai',history_mode:'full'}})+'\n');
-  const codexSent=await codexSend(agent.peer_id,{session:id,workspace,'confirm-workspace':true,timeout:120000});
-  await command(['codex','receive',codexSent.session_snapshot_id]);
-  await check('workspace_restored_in_guest',(await remote('cat /tmp/teleport-live/state/workspace/marker.txt')).trim()==='before');
-  const cloudTurn=JSON.stringify({timestamp:'2026-09-05T10:02:00Z',type:'event_msg',payload:{type:'agent_message',message:'live guest turn'}})+'\n';
-  await remote(`printf 'after\n' > /tmp/teleport-live/state/workspace/marker.txt\nprintf %s ${quote(cloudTurn)} >> ${quote('/tmp/teleport-live/codex/'+sessionName)}`);
-  const returned=await command(['codex','down']);
-  await writeFile(path.join(workspace,'marker.txt'),'local edit\n');
-  await assert.rejects(codexReceive(returned.session_snapshot_id,{from:agent.peer_id,workspace}),/local workspace changed/);
-  await check('local_edits_protected',(await readFile(path.join(workspace,'marker.txt'),'utf8'))==='local edit\n');
-  await writeFile(path.join(workspace,'marker.txt'),'before\n');
-  await codexReceive(returned.session_snapshot_id,{from:agent.peer_id,workspace});
-  await check('workspace_and_transcript_returned',(await readFile(path.join(workspace,'marker.txt'),'utf8'))==='after\n'&&(await readFile(localSession,'utf8')).includes('live guest turn'));
-  const manifest=JSON.parse(await readFile(path.join(process.env.ABRA_TELEPORT_ABRA_ROOT,'capsules',returned.capsule_id||codexSent.capsule_id,'snapshots',returned.workspace_snapshot_id+'.cjson'),'utf8'));
-  await check('internal_observer_in_returned_snapshot',manifest.extensions?.['dev.abra.observed']?.observer?.mode==='once');
+  const health = await checkConnection(agent);
+  await check('connection_status', health.status === 'connected' && Boolean(health.last_seen));
   report.ok=true;
 } catch(error) {report.ok=false;report.errors.push(redact(error.stack||error));console.error(redact(error.message));process.exitCode=1;}
 finally {

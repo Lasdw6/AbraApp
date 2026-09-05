@@ -1,16 +1,15 @@
+import { browserSendTab, sandboxBrowserTabs } from './browser.js';
 import path from 'node:path';
 import { abra, abraBinary, browserAdapterDirectory, daemonStatus, ensureDaemon, stopDaemon } from './abra.js';
-import { appInspect, appStop } from './app.js';
 import { browserClose, browserExec, browserPrepare, browserReceive, browserRevoke, browserSend, browserStatus } from './browser.js';
 import { browserChromeTabs, browserCookieInventory, browserInventory, browserProfiles, browserTabInventory } from './browser-source.js';
-import { ensureChrome } from './chrome.js';
-import { codexHome, codexInspect, codexReceive, codexResume, codexRun, codexSend, codexSessions, codexStatus } from './codex.js';
+import { browserMode, ensureChrome } from './chrome.js';
 import { paths } from './paths.js';
 import { executableOnPath, parseArgs } from './util.js';
 
 const HELP = `abra-teleport
 
-Move browser sessions and Codex workspaces between paired Abra devices.
+Move browser sessions and monitor paired agent sandboxes.
 
 Setup and pairing
   abra-teleport agent connect <pairing-ticket> [name]
@@ -22,6 +21,8 @@ Setup and pairing
   abra-teleport pair add <ticket>
   abra-teleport peers
   abra-teleport inbox
+  abra-teleport browser available-tabs
+  abra-teleport browser send-tab <tab-id>
   abra-teleport daemon stop
 
 Browser round trip
@@ -42,23 +43,8 @@ Browser round trip
 
 Use --all-domains only when you intend to transfer every captured domain.
 
-Codex round trip
-  abra-teleport codex sessions
-  abra-teleport codex inspect <uuid>
-  abra-teleport codex up <peer> --session <uuid|last> --workspace <path> --confirm-workspace
-  abra-teleport codex receive [snapshot-id] --workspace <path>
-  abra-teleport codex run "task" --confirm-workspace [--return-to <peer>]
-  abra-teleport codex resume [--return-to <peer>]
-  abra-teleport codex down [peer] --confirm-workspace
-  abra-teleport codex status
-
-Codex up/down sends two Abra objects: a full workspace snapshot and a partial
-Codex session adapter snapshot. Auth, config, OAuth files, and Codex databases
-never enter the Codex adapter bundle. Use --allow-workspace-secrets only after
-reviewing the local workspace scan.
-
-Portable app
-  abra-teleport app inspect
+Connection status
+  abra-teleport agent health < request.json
 `;
 
 function output(value) {
@@ -72,27 +58,42 @@ function need(value, message) {
 
 async function doctor() {
   const abraPath = await abraBinary();
-  const codexPath = process.env.CODEX_BIN || await executableOnPath('codex');
   let browserAdapter;
   try { browserAdapter = await browserAdapterDirectory(); }
   catch (error) { browserAdapter = { error: error.message }; }
   return {
     node: process.version,
     abra: abraPath,
-    codex: codexPath || null,
     browser_adapter: browserAdapter,
     app_home: paths().home,
     abra_root: paths().abraRoot,
-    codex_home: codexHome(),
     daemon: await daemonStatus()
   };
 }
 
 export async function main(argv) {
+  const browserMutation = argv[0] === 'browser' && !['status', 'tabs', 'profiles'].includes(argv[1]);
+  const sandboxMutation = argv[0] === 'sandbox' && !['status', 'connect', 'browser-incoming'].includes(argv[1]);
+  if (browserMutation || sandboxMutation) {
+    const { withBrowserLock } = await import('./browser-lock.js');
+    return withBrowserLock(() => dispatch(argv));
+  }
+  return dispatch(argv);
+}
+
+async function dispatch(argv) {
   if (argv[0] === 'agent') {
     const { connectAgent, agentTicket, listAgents, agentRemote } = await import('./agent.js');
     if (argv[1] === 'connect') return output(await connectAgent(argv[2], argv[3]));
     if (argv[1] === 'ticket') return output(await agentTicket());
+    if (argv[1] === 'health') {
+      let input = '';
+      for await (const chunk of process.stdin) {
+        input += chunk;
+        if (input.length > 16384) throw new Error('Connection request is too large.');
+      }
+      return output(await (await import('./connection-health.js')).checkConnection(JSON.parse(input).config));
+    }
     if (argv[1] === 'list') return output(await listAgents());
     if (argv[1] === 'remote') {
       let input = '';
@@ -143,38 +144,22 @@ export async function main(argv) {
   }
 
   if (group === 'browser') {
+    if (action === 'available-tabs') return output(await sandboxBrowserTabs());
+    if (action === 'send-tab') return output(await browserSendTab(need(rest[0], 'browser send-tab needs a tab id')));
     if (action === 'profiles') return output(await browserProfiles());
     if (action === 'tabs') return output(await browserChromeTabs());
     if (action === 'cookie-inventory') return output(await browserCookieInventory(need(flags.profile, 'browser cookie-inventory needs --profile'), need(flags.url, 'browser cookie-inventory needs --url'), flags.title, flags['tab-id']));
     if (action === 'tab-inventory') return output(await browserTabInventory(need(flags.profile, 'browser tab-inventory needs --profile'), need(flags.url, 'browser tab-inventory needs --url'), flags.title));
     if (action === 'prepare') return output(await browserPrepare(flags));
     if (action === 'inventory') return output(await browserInventory(need(rest[0], 'browser inventory needs a Chrome profile')));
-    if (action === 'open') return output(await ensureChrome({ headless: flags.headed === true ? false : flags.headless === true || process.platform !== 'darwin', proxy: flags.proxy }));
+    if (action === 'open') return output(await ensureChrome({ headless: browserMode(flags), proxy: flags.proxy }));
     if (action === 'up') return output(await browserSend(need(rest[0], 'browser up needs a peer id'), flags, 'up'));
     if (action === 'down') return output(await browserSend(rest[0], flags, 'down'));
     if (action === 'receive') return output(await browserReceive(rest[0], flags));
-    if (action === 'revoke') return output(await browserRevoke());
+    if (action === 'revoke') return output(await browserRevoke(flags.session));
     if (action === 'status') return output(await browserStatus());
     if (action === 'close') return output(await browserClose(flags));
     throw new Error('browser needs open, up, receive, exec, down, revoke, status, or close');
-  }
-
-  if (group === 'codex') {
-    if (action === 'sessions') return output(await codexSessions());
-    if (action === 'inspect') return output(await codexInspect(need(rest[0], 'codex inspect needs a session id')));
-    if (action === 'up') return output(await codexSend(need(rest[0], 'codex up needs a peer id'), flags, 'up'));
-    if (action === 'down') return output(await codexSend(rest[0], flags, 'down'));
-    if (action === 'receive') return output(await codexReceive(rest[0], flags));
-    if (action === 'run') return output(await codexRun(need(rest.join(' '), 'codex run needs a task'), flags));
-    if (action === 'resume') return output(await codexResume(flags));
-    if (action === 'status') return output(await codexStatus());
-    throw new Error('codex needs sessions, up, receive, run, resume, down, or status');
-  }
-
-  if (group === 'app') {
-    if (action === 'inspect') return output(await appInspect());
-    if (action === 'stop') return output(await appStop());
-    throw new Error('app needs inspect or stop');
   }
 
   throw new Error(`unknown command: ${[group, action].filter(Boolean).join(' ')}`);

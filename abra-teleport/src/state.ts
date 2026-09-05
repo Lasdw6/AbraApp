@@ -2,7 +2,7 @@ import { paths } from './paths.js';
 import { readJson, writeJson } from './util.js';
 
 export async function loadState() {
-  return readJson(paths().state, { version: 1, browser: {}, codex: {} });
+  return readJson(paths().state, { version: 1, browser: {} });
 }
 
 export async function updateState(mutator) {

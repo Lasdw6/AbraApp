@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { browserAdapterDirectory } from './abra.js';
-import { chromeStatus, ensureChrome } from './chrome.js';
+import { chromeStatus, ensureChrome, matchesBrowser } from './chrome.js';
 import { loadState } from './state.js';
 import { exists, run } from './util.js';
 
@@ -276,7 +276,7 @@ export async function browserInventory(profile) {
   if (profile === 'active') {
     const chrome = await ensureChrome({ headless: false });
     const state = await loadState();
-    const browserContextId = state.browser.active_context_id && state.browser.chrome_pid === chrome.pid
+    const browserContextId = state.browser.active_context_id && matchesBrowser(state.browser, chrome)
       ? state.browser.active_context_id
       : undefined;
     const { capture, buildManifest } = await browserModules();
@@ -398,14 +398,14 @@ export async function browserCookieInventory(profile, url, title = '', tabId = '
   return { ...summarize(state, profile, buildManifest), liveState };
 }
 
-export async function selectedBrowserState(profile, url, title, selectedCookieKeys, includeStorage = true, tabId = '') {
+export async function selectedBrowserState(profile, url, title, selectedCookieKeys, includeStorage = true, tabId = '', sourceCdp?: string) {
   const requestedURL = new URL(url);
   if (!['http:', 'https:'].includes(requestedURL.protocol)) throw new Error('select an HTTP or HTTPS Chrome tab');
   const protectedGoogleState = isGoogleOrYouTubeHost(requestedURL.hostname);
   let selectedURL = requestedURL;
   let state;
   if (profile === 'active') {
-    state = await captureManagedTab(tabId, url, { includeStorage: includeStorage && !protectedGoogleState });
+    state = await captureManagedTab(tabId, url, { includeStorage: includeStorage && !protectedGoogleState, wsUrl: sourceCdp });
     state.cookies = protectedGoogleState ? [] : state.cookies.filter(cookie => cookieAppliesTo(cookie, requestedURL));
     if (selectedCookieKeys !== null) {
       const allowed = new Set(selectedCookieKeys || []);

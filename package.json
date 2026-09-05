@@ -2,7 +2,7 @@
   "name": "abra-app",
   "private": true,
   "scripts": {
-    "test": "npm --prefix abra-teleport test",
+    "test": "npm --prefix abra-teleport test && npm --prefix desktop test",
     "desktop": "npm --prefix desktop run desktop",
     "build": "npm --prefix desktop run desktop:build",
     "build:windows": "npm --prefix desktop run desktop:build:windows",

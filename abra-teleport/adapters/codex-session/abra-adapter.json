@@ -1,8 +1,0 @@
-{
-  "spec": "abra-adapter/1",
-  "name": "dev.abra.codex-session",
-  "version": "0.1.0",
-  "kinds": ["dev.abra.codex.session.v1"],
-  "verbs": ["export", "import"],
-  "executable": "bin/adapter.js"
-}

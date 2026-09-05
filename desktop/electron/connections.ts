@@ -5,17 +5,20 @@ import * as path from 'node:path';
 import type { RuntimePaths, AgentDescriptor as Agent } from '../shared/contracts.js';
 
 function createConnections({ home, runtime }: { home: string; runtime: () => RuntimePaths }) {
-  const file = path.join(home, '.abra-teleport/selected-agent.json');
+  const stateHome = process.env.ABRA_TELEPORT_HOME || path.join(home, '.abra-teleport');
+  const file = path.join(stateHome, 'selected-agent.json');
   let pending = 0;
   let queue: Promise<unknown> = Promise.resolve();
+  let ready: Promise<void> | undefined;
   async function config(): Promise<Agent | null> {
     try { return JSON.parse(await readFile(file, 'utf8')); }
     catch (error) { if (error.code === 'ENOENT') return null; throw error; }
   }
-  async function invoke<T = any>(args: string[], request?: unknown): Promise<T> {
+  async function run<T = any>(args: string[], request?: unknown, timeout = 540000): Promise<T> {
     const rt = runtime();
     return new Promise<T>((resolve, reject) => {
       const child = spawn(rt.node, [path.join(rt.wrapper, 'bin/abra-teleport.js'), ...args], {
+        timeout,
         stdio: ['pipe', 'pipe', 'pipe'],
         env: { ...process.env, ...(rt.asNode ? { ELECTRON_RUN_AS_NODE: '1' } : {}), ABRA_BIN: rt.abra,
           ABRA_BROWSER_ADAPTER: rt.adapter, ABRA_OBSERVER: rt.observer, ABRA_TELEPORT_DESKTOP: '1',
@@ -33,12 +36,19 @@ function createConnections({ home, runtime }: { home: string; runtime: () => Run
       child.stdin.end(request ? JSON.stringify(request) : '');
     });
   }
+  async function invoke<T = any>(args: string[], request?: unknown, timeout = 540000): Promise<T> {
+    // Health, agent discovery, and handoff restoration can start together.
+    // Finish any daemon upgrade once before letting those requests proceed.
+    ready ??= run(['setup'], undefined, 20000).then(() => {}, error => { ready = undefined; throw error; });
+    await ready;
+    return run<T>(args, request, timeout);
+  }
   async function select(id: string) {
     if (pending) throw new Error('Wait for the current handoff to finish.');
-    const active = await readFile(path.join(home, '.abra-teleport/handoff.json'), 'utf8').then(JSON.parse).catch(error => {
+    const active = await readFile(path.join(stateHome, 'handoff.json'), 'utf8').then(JSON.parse).catch(error => {
       if (error.code === 'ENOENT') return {}; throw error;
     });
-    if (active.agent && active.agent !== id) throw new Error('Bring back the active handoff before switching agents.');
+    if (active.browser && active.agent && active.agent !== id) throw new Error('Bring back the active handoff before switching agents.');
     const agents = await invoke<Agent[]>(['agent', 'list']);
     const selected = agents.find(agent => agent.id === id);
     if (!selected) throw new Error('That agent has not connected.');
@@ -59,6 +69,6 @@ function createConnections({ home, runtime }: { home: string; runtime: () => Run
     queue = operation.catch(() => {});
     return operation;
   }
-  return { config, select, command, ticket: () => invoke(['agent', 'ticket']), list: () => invoke(['agent', 'list']) };
+  return { config, select, command, health: async () => invoke(['agent', 'health'], { config: await config() }, 20000), ticket: () => invoke(['agent', 'ticket']), list: () => invoke(['agent', 'list']) };
 }
 export { createConnections };

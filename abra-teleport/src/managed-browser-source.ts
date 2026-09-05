@@ -2,22 +2,23 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { browserAdapterDirectory } from './abra.js';
 import { chromeStatus } from './chrome.js';
+import { browserEndpoint } from './browser-discovery.js';
 
 export function usesManagedBrowser() {
   return process.platform !== 'darwin' || process.env.ABRA_TELEPORT_BROWSER_SOURCE === 'managed';
 }
 
-async function connect() {
-  const chrome = await chromeStatus();
+async function connect(wsUrl?: string) {
+  const chrome = wsUrl ? await browserEndpoint(wsUrl) : await chromeStatus();
   if (!chrome) throw new Error('Open the Abra browser, sign in to your site, then refresh tabs.');
   const adapter = await browserAdapterDirectory();
   const modules = await import(pathToFileURL(path.join(adapter, 'lib/cdp.js')).href);
   return { ...modules, cdp: await new modules.CDP(chrome.wsUrl).connect() };
 }
 
-export async function managedTabs() {
-  if (!await chromeStatus()) return [];
-  const { cdp } = await connect();
+export async function managedTabs(wsUrl?: string) {
+  if (!wsUrl && !await chromeStatus()) return [];
+  const { cdp } = await connect(wsUrl);
   try {
     return (await cdp.send('Target.getTargets')).targetInfos
       .filter(target => target.type === 'page' && /^https?:\/\//.test(target.url))
@@ -28,10 +29,10 @@ export async function managedTabs() {
 
 // Read only the selected target. Other tabs may hold different session storage,
 // even when they have the same URL and share cookies.
-export async function captureManagedTab(tabId, url, { includeStorage = true, metadataOnly = false } = {}) {
+export async function captureManagedTab(tabId, url, { includeStorage = true, metadataOnly = false, wsUrl = undefined as string | undefined } = {}) {
   const expected = new URL(url);
   if (!['http:', 'https:'].includes(expected.protocol)) throw new Error('Select an HTTP or HTTPS tab.');
-  const { cdp, attachPage, evalValue } = await connect();
+  const { cdp, attachPage, evalValue } = await connect(wsUrl);
   let session;
   try {
     const { targetInfo } = await cdp.send('Target.getTargetInfo', { targetId: String(tabId || '') });

@@ -8,6 +8,9 @@ mkdir -p "$INSTALL" "$BIN_DIR"
 if [[ "$SOURCE" != "$INSTALL" ]]; then
   for item in bin src adapters scripts runtime package.json; do cp -R "$SOURCE/$item" "$INSTALL/"; done
 fi
+# Retire files from older releases; user state lives outside this install directory.
+rm -rf "$INSTALL/adapters/codex-session"
+rm -f "$INSTALL/src/codex.js" "$INSTALL/src/codex.d.ts" "$INSTALL/src/app.js" "$INSTALL/src/app.d.ts"
 case "$(uname -s)" in Linux) PLATFORM=linux;; Darwin) PLATFORM=darwin;; *) echo 'Linux or macOS is required.' >&2; exit 1;; esac
 case "$(uname -m)" in x86_64) ARCH=x64;; arm64|aarch64) ARCH=arm64;; *) echo 'x86_64 or arm64 is required.' >&2; exit 1;; esac
 if command -v node >/dev/null && node -e 'process.exit(+process.versions.node.split(".")[0] >= 22 ? 0 : 1)'; then
@@ -47,4 +50,4 @@ NODE_DIR="$(dirname "$NODE")"
 printf '#!/usr/bin/env bash\nexport PATH=%q:"$PATH"\nexec %q %q "$@"\n' "$NODE_DIR" "$NODE" "$INSTALL/bin/abra-teleport.js" > "$BIN_DIR/abra-teleport"
 chmod +x "$BIN_DIR/abra-teleport"
 echo 'Installed. Add $HOME/.local/bin to PATH, then run the pairing command from Teleport.'
-echo 'Browser handoffs require Chrome/Chromium. Codex tasks require Codex installed and signed in inside the sandbox.'
+echo 'Browser handoffs require Chrome/Chromium.'

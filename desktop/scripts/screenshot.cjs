@@ -1,0 +1,40 @@
+// Dev helper: renders dist-web with a fake bridge and saves PNGs.
+// Usage: npx vite build && npx electron scripts/screenshot.cjs out.png [pick|selected|cloud|offline|unpaired|popover|command]
+const path = require('node:path');
+const fs = require('node:fs');
+
+// Some shells export ELECTRON_RUN_AS_NODE, which makes the electron binary act like plain node.
+// In that case relaunch ourselves with the variable cleared.
+if (process.env.ELECTRON_RUN_AS_NODE) {
+  const { spawnSync } = require('node:child_process');
+  const env = { ...process.env };
+  delete env.ELECTRON_RUN_AS_NODE;
+  const result = spawnSync(require('electron'), [__filename, ...process.argv.slice(2)], { env, stdio: 'inherit' });
+  process.exit(result.status ?? 1);
+}
+
+const { app, BrowserWindow } = require('electron');
+
+const out = process.argv[2] || 'screenshot.png';
+const scenario = process.argv[3] || 'pick';
+const clickTab = scenario === 'selected';
+
+app.whenReady().then(async () => {
+  const win = new BrowserWindow({
+    width: 1320, height: 880, show: false, backgroundColor: '#0b0d12',
+    webPreferences: { preload: path.join(__dirname, 'screenshot-mock.cjs'), contextIsolation: true, sandbox: true, additionalArguments: [`--abra-shot=${scenario}`] },
+  });
+  await win.loadFile(path.join(__dirname, '..', 'dist-web', 'index.html'));
+  await new Promise(r => setTimeout(r, 600));
+  const click = async (selector) => {
+    await win.webContents.executeJavaScript(`[...document.querySelectorAll(${JSON.stringify(selector)})].at(-1)?.click()`);
+    await new Promise(r => setTimeout(r, 500));
+  };
+  if (clickTab) await click('.tab-card');
+  if (scenario === 'remote') await click('.browser-navigation button:nth-child(2)');
+  if (scenario === 'popover') await click('.agent-pill');
+  if (scenario === 'command') { await click('.steps .primary'); await click('.steps .secondary'); }
+  const image = await win.webContents.capturePage();
+  fs.writeFileSync(out, image.toPNG());
+  app.quit();
+});

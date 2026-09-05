@@ -1,6 +1,6 @@
 {
   "name": "@abra/desktop",
-  "version": "0.3.0",
+  "version": "0.3.0-rc.2",
   "private": true,
   "main": "build-electron/electron/main.js",
   "scripts": {
@@ -10,7 +10,8 @@
     "desktop:build": "npm run typecheck && cargo build --release --manifest-path ../abra/Cargo.toml -p abra-cli && bash ../abra-teleport/scripts/package-agent.sh && npm run build && electron-builder --mac dir",
     "typecheck": "tsc --noEmit && tsc -p tsconfig.electron.json --noEmit",
     "desktop:build:windows": "npm run typecheck && npm run build && tsx scripts/package-windows.ts",
-    "build:electron": "tsc -p tsconfig.electron.json"
+    "build:electron": "tsx scripts/build-electron.ts",
+    "test": "tsx --test test/*.test.ts"
   },
   "dependencies": {
     "react": "19.1.0",

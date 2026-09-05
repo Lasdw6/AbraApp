@@ -1,9 +1,56 @@
 <!doctype html>
-<html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Abra Teleport</title>
-<style>body{font:18px/1.6 system-ui,sans-serif;max-width:650px;margin:12vh auto;padding:24px;background:#10131a;color:#eef1f8}h1{font-size:40px;line-height:1.1}a{color:#94b9ff}code{font-size:15px}p{color:#b6bdce}</style>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="description" content="Move a browser session between your laptop and your agent’s sandbox. Download Abra Teleport for Mac or Windows.">
+<title>Download Abra Teleport</title>
+<style>
+:root{color-scheme:dark;font-family:system-ui,sans-serif;background:#10131a;color:#eef1f8}
+*{box-sizing:border-box}body{max-width:860px;margin:7vh auto;padding:24px;font-size:17px;line-height:1.6}
+h1{font-size:clamp(32px,5vw,48px);line-height:1.12;letter-spacing:-1.3px;max-width:700px}h2{font-size:23px;line-height:1.25;margin:0 0 12px}h3{font-size:18px;margin:0 0 8px}
+a{color:#a5c3ff}p,li{color:#b6bdce}strong{color:#eef1f8}.eyebrow{color:#91aaff;font-size:13px;letter-spacing:1px;text-transform:uppercase}
+.downloads{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin:32px 0}.card{padding:24px;border:1px solid #303747;border-radius:16px;background:#171c27}.card p{font-size:15px;min-height:48px}.button{display:inline-block;background:#356cf3;color:white;text-decoration:none;border-radius:9px;padding:11px 17px;font-weight:650}.button:hover{background:#497dfa}a:focus-visible{outline:3px solid #c5d6ff;outline-offset:4px}.details{font-size:14px;margin-top:14px}.setup{margin:36px 0;padding-top:26px;border-top:1px solid #303747}li{margin:10px 0}code{font:14px/1.6 ui-monospace,monospace}pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#090c12;padding:16px;border:1px solid #303747;border-radius:9px;color:#eef1f8}footer{margin-top:40px;padding-top:20px;border-top:1px solid #303747;font-size:14px}
+@media(max-width:620px){body{margin:20px auto;padding:20px}.downloads{grid-template-columns:1fr}.card p{min-height:0}}
+</style>
+</head>
+<body>
+<main>
+<p class="eyebrow">Abra Teleport · 0.3.0 preview 2</p>
 <h1>Your laptop. Your agent’s sandbox. Connected.</h1>
-<p>Abra Teleport moves selected browser sessions and workspaces between them.</p>
-<p>In the app, choose <strong>Connect your agent</strong>, then <strong>Create connection command</strong>. Give that command to your agent. It installs the CLI if needed and pairs the sandbox with your laptop.</p>
+<p>Move a browser tab with the cookies you choose to your agent’s sandbox, then bring it back when you’re ready.</p>
+<section class="downloads" aria-label="Download Abra Teleport">
+<article class="card">
+<h2>Mac</h2>
+<p>For Macs with Apple Silicon — M1 or newer.</p>
+<a class="button" href="https://github.com/Lasdw6/AbraApp/releases/download/v0.3.0-rc.2/Abra-Teleport-mac-arm64.zip">Download for Mac</a>
+<div class="details">Extract the ZIP, move Abra Teleport to Applications, then open it.</div>
+</article>
+<article class="card">
+<h2>Windows <span class="eyebrow">WSL preview</span></h2>
+<p>For Intel/AMD 64-bit PCs. Runs through WSL 2 with a desktop window.</p>
+<a class="button" href="https://github.com/Lasdw6/AbraApp/releases/download/v0.3.0-rc.2/Abra-Teleport-Windows-WSL-x64.zip">Download for Windows</a>
+<div class="details"><a href="#windows-setup">Windows setup steps ↓</a></div>
+</article>
+</section>
+<section class="setup" id="windows-setup">
+<h2>Set up on Windows</h2>
+<p>Requires Windows 11 or Windows 10 build 19044+, hardware virtualization, and internet access. This preview uses Ubuntu 24.04 in WSL 2. Windows ARM is not supported yet.</p>
+<ol>
+<li>Download and extract the Windows ZIP. Keep the extracted files together.</li>
+<li>Open PowerShell in the extracted <code>Abra-Teleport-Windows-WSL</code> folder and run:
+<pre><code>powershell -NoProfile -ExecutionPolicy Bypass -File .\Setup-Windows.ps1</code></pre></li>
+<li>Follow the Ubuntu setup prompts. If Windows asks you to restart, run the same setup command afterward.</li>
+<li>Open <strong>Abra Teleport</strong> from the desktop shortcut. Use <strong>Open Abra browser</strong> to sign in to the sites you want to send.</li>
+</ol>
+<p>The app uses Chrome inside WSL. Your regular Windows Chrome and Edge profiles are not imported. <a href="https://github.com/Lasdw6/AbraApp/blob/main/WINDOWS.md">Full Windows instructions</a></p>
+</section>
+<section class="setup">
+<h2>Connect your agent</h2>
+<p>In the app, choose <strong>Create command</strong> and give the command to your agent. It installs the CLI if needed and pairs the sandbox with your laptop. Then choose <strong>Find agents</strong> and select it.</p>
 <p>Only pair an agent you trust. Your sandbox needs outbound access to Abra’s network.</p>
-<p><a href="https://github.com/Lasdw6/AbraApp/releases">Downloads</a> · <a href="https://github.com/Lasdw6/AbraApp">Source code</a> · <a href="install.sh">Read the installer</a></p>
+</section>
+</main>
+<footer><a href="https://github.com/Lasdw6/AbraApp/releases/tag/v0.3.0-rc.2">Release notes and checksums</a> · <a href="https://github.com/Lasdw6/AbraApp">Source code</a> · <a href="install.sh">Read the agent installer</a></footer>
+</body>
 </html>

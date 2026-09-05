@@ -25,6 +25,6 @@ for (const directory of ['adapters', 'scripts']) await copyAssets(directory);
 const source = JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8'));
 await writeFile(path.join(output, 'package.json'), JSON.stringify({ name: source.name, version: source.version,
   type: 'module', engines: source.engines, bin: { 'abra-teleport': 'bin/abra-teleport.js' } }, null, 2));
-for (const file of ['bin/abra-teleport.js', 'adapters/codex-session/bin/adapter.js', 'adapters/teleport-agent/bin/adapter.js']) {
+for (const file of ['bin/abra-teleport.js', 'adapters/teleport-agent/bin/adapter.js']) {
   await chmod(path.join(output, file), 0o755);
 }

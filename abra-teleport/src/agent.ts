@@ -59,10 +59,10 @@ export async function listAgents() {
   return Object.values(agents);
 }
 
-export async function agentRemote(config: AgentDescriptor, argv: string[]) {
+export async function agentRemote(config: AgentDescriptor, argv: string[], timeout = 540000) {
   await ensureDaemon();
   if (!config?.peer_id || !/^[0-9a-f]{64}$/.test(config.capsule_id || '')) throw new Error('Choose a connected agent.');
-  const response = await abra(['control', config.peer_id, '--capsule', config.capsule_id, 'instruct', JSON.stringify({ argv })]);
+  const response = await abra(['control', config.peer_id, '--capsule', config.capsule_id, 'instruct', JSON.stringify({ argv })], { timeout });
   if (!response.ok) throw new Error(response.error || 'The agent refused the request.');
   if (typeof response.result?.stdout !== 'string') throw new Error('The agent returned no command output.');
   return response.result.stdout;
@@ -72,6 +72,8 @@ export function agentArguments(argv: unknown, agent: { controller: string }) {
   if (!Array.isArray(argv) || argv.some(x => typeof x !== 'string') || JSON.stringify(argv).length > 7500) throw new Error('Invalid agent request.');
   const [group, action] = argv;
   if (group === 'doctor' && argv.length === 1) return argv;
+  if (group === 'browser' && action === 'available-tabs' && argv.length === 2) return argv;
+  if (group === 'browser' && action === 'send-tab' && argv.length === 3 && /^[a-f0-9]{32}$/i.test(argv[2])) return argv;
   if (group === 'browser' && action === 'input' && argv.length === 3) return argv;
   if (group === 'browser' && action === 'exec') {
     const index = argv[2] === '--' ? 4 : 3;
@@ -81,22 +83,16 @@ export function agentArguments(argv: unknown, agent: { controller: string }) {
   }
   if (group === 'browser' && action === 'receive') {
     if (!/^[0-9a-f]{64}$/.test(argv[2] || '')) throw new Error('Invalid browser handoff.');
-    return ['browser', 'receive', argv[2], '--from', agent.controller, '--headless'];
+    return ['browser', 'receive', argv[2], '--from', agent.controller];
   }
   if (group === 'browser' && ['down', 'revoke', 'close', 'status'].includes(action)) {
-    return action === 'down' ? ['browser', 'down', agent.controller, '--all-domains'] : ['browser', action, ...(action === 'close' ? ['--force'] : [])];
+    const sessionIndex = argv.indexOf('--session');
+    const session = sessionIndex >= 0 ? argv[sessionIndex + 1] : undefined;
+    if (sessionIndex >= 0 && !/^[a-f0-9]{32}$/i.test(session || '')) throw new Error('Invalid browser session.');
+    const selected = session ? ['--session', session] : [];
+    return action === 'down' ? ['browser', 'down', agent.controller, '--all-domains', ...selected]
+      : ['browser', action, ...(action === 'close' ? ['--force'] : selected)];
   }
-  if (group === 'codex' && action === 'receive') {
-    if (!/^[0-9a-f]{64}$/.test(argv[2] || '')) throw new Error('Invalid Codex handoff.');
-    return ['codex', 'receive', argv[2], '--from', agent.controller, '--workspace', path.join(paths().home, 'workspace')];
-  }
-  if (group === 'codex' && action === 'run') {
-    if (!argv[2]?.trim()) throw new Error('Enter a task.');
-    return ['codex', 'run', argv[2], '--no-return'];
-  }
-  if (group === 'codex' && action === 'inspect' && /^[0-9a-f-]{36}$/.test(argv[2] || '')) return argv.slice(0, 3);
-  if (group === 'codex' && action === 'down') return ['codex', 'down', agent.controller, '--confirm-workspace'];
-  if (group === 'app' && ['inspect', 'stop'].includes(action)) return argv.slice(0, 2);
   throw new Error('This command is not exposed by Teleport.');
 }
 

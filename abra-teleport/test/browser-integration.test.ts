@@ -59,10 +59,11 @@ async function changeCloudBrowser(wsUrl, contextId) {
   } finally { cdp.close(); }
 }
 
-test('consumer handoff sends a managed tab, returns it, and can send the returned tab again', { skip: !enabled, timeout: 120000 }, async () => {
+test('handoff reuses a sandbox browser, returns the tab, and preserves existing tabs and cookies', { skip: !enabled, timeout: 180000 }, async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'abra-teleport-browser-'));
   const homeA = path.join(root, 'a');
   const homeB = path.join(root, 'b');
+  const providerHome = path.join(root, 'provider');
   const original = { ...process.env };
   process.env.ABRA_BIN ||= path.resolve(import.meta.dirname, '..', '..', 'abra', 'target', 'debug', 'abra');
   process.env.ABRA_BROWSER_ADAPTER ||= path.resolve(import.meta.dirname, '..', '..', 'abra', 'adapters', 'browser-session');
@@ -74,8 +75,13 @@ test('consumer handoff sends a managed tab, returns it, and can send the returne
     await seedBrowser(chromeA.wsUrl, web.url);
 
     const ticket = (await abra(['pair', 'ticket'])).ticket;
+    await selectDevice(providerHome);
+    const providerChrome = await ensureChrome({ headless: true });
+    await seedBrowser(providerChrome.wsUrl, web.url);
+    process.env.ABRA_TELEPORT_CDP_URL = providerChrome.wsUrl;
     await selectDevice(homeB);
     const statusB = await connectAgent(ticket, 'browser sandbox');
+    delete process.env.ABRA_TELEPORT_CDP_URL;
     await selectDevice(homeA);
     const [agent] = await listAgents();
     process.env.ABRA_TELEPORT_BROWSER_SOURCE = 'managed';
@@ -83,6 +89,8 @@ test('consumer handoff sends a managed tab, returns it, and can send the returne
     const prepared = await sandboxCommand('browser-up', agent, { profile: 'active', url: web.url, 'tab-id': selected.id, 'all-cookies': true });
     assert.equal(prepared.cookie_count, 1);
     const remoteStatus = JSON.parse(await agentRemote(agent, ['browser', 'status']));
+    assert.equal(remoteStatus.chrome.owned, false);
+    assert.equal(remoteStatus.chrome.wsUrl, providerChrome.wsUrl);
     const receivedB = { cdp: remoteStatus.chrome.wsUrl, browser_context_id: remoteStatus.handoff.active_context_id };
     await agentRemote(agent, ['browser', 'input', JSON.stringify({ text: 'typed through Abra' })]);
     await changeCloudBrowser(receivedB.cdp, receivedB.browser_context_id);
@@ -90,6 +98,12 @@ test('consumer handoff sends a managed tab, returns it, and can send the returne
     assert.equal(cloudState.cookies.find(cookie => cookie.name === 'abra_auth')?.value, 'cloud');
     assert.equal(cloudState.origins.find(origin => origin.origin.startsWith('http://127.0.0.1:'))?.localStorage.find(item => item.name === 'roundtrip')?.value, 'cloud');
     await sandboxCommand('browser-down', agent, { headless: true });
+    const untouched = await capture(providerChrome.wsUrl, {});
+    assert.equal(untouched.cookies.find(cookie => cookie.name === 'abra_auth')?.value, 'local', 'provider cookies are unchanged');
+    assert.equal(untouched.origins[0].localStorage.find(item => item.name === 'roundtrip')?.value, 'local', 'provider storage is unchanged');
+    assert.ok(untouched.tabs.some(tab => tab.url === web.url), 'provider tabs remain open');
+    const inspect = await new CDP(providerChrome.wsUrl).connect();
+    try { assert.ok(!(await inspect.send('Target.getBrowserContexts')).browserContextIds.includes(receivedB.browser_context_id), 'only the imported context was removed'); } finally { inspect.close(); }
     const localStatus = await browserStatus();
     const returned = { cdp: localStatus.chrome.wsUrl, browser_context_id: localStatus.handoff.active_context_id };
     const returnedState = await capture(returned.cdp, {}, { browserContextId: returned.browser_context_id });
@@ -100,10 +114,57 @@ test('consumer handoff sends a managed tab, returns it, and can send the returne
     const sentAgain = await sandboxCommand('browser-up', agent, { profile: 'active', url: web.url, 'tab-id': selectedAgain.id, 'all-cookies': true });
     assert.equal(sentAgain.transferred, true);
     await sandboxCommand('browser-down', agent, { headless: true });
+    const revokeTab = (await browserChromeTabs()).find(tab => tab.url === web.url);
+    await sandboxCommand('browser-up', agent, { profile: 'active', url: web.url, 'tab-id': revokeTab.id, 'all-cookies': true });
+    const toRevoke = JSON.parse(await agentRemote(agent, ['browser', 'status']));
+    const revoked = await sandboxCommand('browser-revoke', agent);
+    assert.ok(revoked.revoked);
+    assert.deepEqual((await sandboxCommand('status', agent)).active, {});
+    const remaining = await new CDP(providerChrome.wsUrl).connect();
+    try { assert.ok(!(await remaining.send('Target.getBrowserContexts')).browserContextIds.includes(toRevoke.handoff.active_context_id)); } finally { remaining.close(); }
+    const afterRevoke = await capture(providerChrome.wsUrl, {});
+    assert.equal(afterRevoke.cookies.find(cookie => cookie.name === 'abra_auth')?.value, 'local');
+    assert.ok(afterRevoke.tabs.some(tab => tab.url === web.url));
+    assert.equal((await sandboxCommand('browser-revoke', agent)).already_revoked, true, 'revocation can be retried');
+
+    // Two handoffs coexist; operations must address the selected context only.
+    const sourceTab = (await browserChromeTabs()).find(tab => tab.url === web.url)!;
+    const one = await sandboxCommand('browser-up', agent, { profile: 'active', url: web.url, 'tab-id': sourceTab.id, 'all-cookies': true });
+    const two = await sandboxCommand('browser-up', agent, { profile: 'active', url: web.url, 'tab-id': sourceTab.id, 'all-cookies': true });
+    assert.notEqual(one.session.id, two.session.id);
+    assert.equal((await sandboxCommand('status', agent)).active.browsers.length, 2);
+    await assert.rejects(sandboxCommand('browser-down', agent), /Choose which/);
+    await assert.rejects(sandboxCommand('browser-revoke', agent, { session_id: 'f'.repeat(32) }), /no longer active/);
+    await sandboxCommand('browser-revoke', agent, { session_id: one.session.id });
+    const other = JSON.parse(await agentRemote(agent, ['browser', 'status']));
+    assert.equal(other.sessions.length, 1);
+    assert.equal(other.sessions[0].active_context_id, two.session.id);
+    assert.ok((await capture(providerChrome.wsUrl, {}, { browserContextId: two.session.id })).tabs.length);
+    await sandboxCommand('browser-down', agent, { session_id: two.session.id, headless: true });
+    assert.deepEqual((await sandboxCommand('status', agent)).active, {});
+
+    // Pull an original provider tab, then let the agent initiate another send.
+    const cloudTabs = await sandboxCommand('browser-tabs', agent);
+    const originalTab = cloudTabs.tabs.find(tab => tab.url === web.url)!;
+    assert.ok(originalTab);
+    await sandboxCommand('browser-pull', agent, { tab_id: originalTab.id, headless: true });
+    assert.ok((await capture(providerChrome.wsUrl, {})).tabs.some(tab => tab.url === web.url));
+    const pushed = JSON.parse(await agentRemote(agent, ['browser', 'send-tab', originalTab.id]));
+    assert.ok((await sandboxCommand('browser-incoming', agent)).incoming.some(item => item.id === pushed.snapshot_id));
+    await sandboxCommand('browser-accept', agent, { id: pushed.snapshot_id, headless: true });
+    assert.ok(!(await sandboxCommand('browser-incoming', agent)).incoming.some(item => item.id === pushed.snapshot_id));
+    const returnedSessions = (await browserStatus()).sessions;
+    assert.ok(returnedSessions.length >= 3, 'opening another returned tab preserves previously returned tabs');
+    const pushedSession = returnedSessions.find(item => item.received_snapshot_id === pushed.snapshot_id)!;
+    const pushedState = await capture((await browserStatus()).chrome.wsUrl, {}, { browserContextId: pushedSession.active_context_id });
+    assert.equal(pushedState.cookies.find(cookie => cookie.name === 'abra_auth')?.value, 'local');
+    assert.equal(pushedState.origins[0].localStorage.find(item => item.name === 'roundtrip')?.value, 'local');
+
   } finally {
     await new Promise(resolve => web.server.close(resolve));
     await selectDevice(homeA); await stopChrome().catch(() => {}); await stopDaemon().catch(() => {});
     await selectDevice(homeB); await stopChrome().catch(() => {}); await stopDaemon().catch(() => {});
+    await selectDevice(providerHome); await stopChrome().catch(() => {});
     Object.keys(process.env).forEach(key => { if (!(key in original)) delete process.env[key]; });
     Object.assign(process.env, original);
     await rm(root, { recursive: true, force: true });

@@ -23,8 +23,7 @@ jobs:
           rustup toolchain install 1.91.0 --profile minimal
           cargo +1.91.0 build --locked --release --manifest-path abra/Cargo.toml -p abra-cli
       - run: npm ci
-      - run: npm install --global @openai/codex@0.153.4
-      - name: Test pairing, workspaces, and real Chrome captures
+      - name: Test pairing, monitoring, and real Chrome captures
         env:
           ABRA_TELEPORT_INTEGRATION: '1'
           ABRA_TELEPORT_BROWSER_INTEGRATION: '1'

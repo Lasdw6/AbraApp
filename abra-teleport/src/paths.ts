@@ -19,8 +19,7 @@ export function paths() {
     daemonState: path.join(home, 'daemon.json'),
     daemonLog: path.join(home, 'daemon.log'),
     state: path.join(home, 'state.json'),
-    received: path.join(home, 'received'),
-    codexAdapter: path.join(appRoot, 'adapters', 'codex-session')
+    received: path.join(home, 'received')
   };
 }
 

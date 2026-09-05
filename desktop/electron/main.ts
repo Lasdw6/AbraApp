@@ -1,8 +1,7 @@
-import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain } from 'electron';
 import { spawn } from 'node:child_process';
 import { copyFile } from 'node:fs/promises';
 import * as path from 'node:path';
-import * as appRunner from './app-runner.js';
 import { createConnections } from './connections.js';
 
 function runtime() {
@@ -38,6 +37,7 @@ ipcMain.handle('abra:export-installer', async () => {
   await copyFile(source, result.filePath);
   return result.filePath;
 });
+ipcMain.handle('abra:connection-health', () => connections.health());
 ipcMain.handle('abra:agent-list', () => connections.list());
 ipcMain.handle('abra:agent-select', (_event, id) => connections.select(id));
 ipcMain.handle('abra:sandbox', (_event, action, payload) => connections.command(action, payload));
@@ -86,23 +86,6 @@ async function local(args: string[]) {
 }
 
 ipcMain.handle('abra:local', (_event, args) => local(args));
-ipcMain.handle('abra:choose-workspace', async () => {
-  const result = await dialog.showOpenDialog({
-    title: 'Choose the workspace to teleport',
-    properties: ['openDirectory', 'createDirectory'],
-  });
-  return result.canceled ? null : result.filePaths[0];
-});
-ipcMain.handle('abra:app-target', (_event, name, sessionId) => appRunner.target(app.getPath('home'), name, sessionId));
-ipcMain.handle('abra:app-start', (_event, workspace) => appRunner.start(app.getPath('home'), workspace));
-ipcMain.handle('abra:app-stop', () => appRunner.stop());
-ipcMain.handle('abra:app-status', () => appRunner.status());
-ipcMain.handle('abra:app-open', async () => {
-  const current = appRunner.status();
-  if (!current.active || !current.url) throw new Error('Start the local app first.');
-  await shell.openExternal(current.url);
-  return current;
-});
 function createWindow() {
   const window = new BrowserWindow({
     width: 1320,
@@ -130,10 +113,3 @@ app.whenReady().then(() => {
 });
 
 app.on('window-all-closed', () => app.quit());
-let cleanupStarted = false;
-app.on('before-quit', event => {
-  if (cleanupStarted || !appRunner.status().active) return;
-  event.preventDefault();
-  cleanupStarted = true;
-  void appRunner.stop().finally(() => app.quit());
-});

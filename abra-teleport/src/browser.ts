@@ -2,12 +2,15 @@ import { mkdir, mkdtemp, readdir, readFile, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { abra, browserAdapterDirectory, ensureDaemon, ensurePrivateMaterialization, waitForAck } from './abra.js';
-import { chromeStatus, ensureChrome, stopChrome as stopManagedChrome } from './chrome.js';
+import { browserMode, chromeStatus, ensureChrome, matchesBrowser, stopChrome as stopManagedChrome } from './chrome.js';
 import { ensureChromeProfile, selectedBrowserState } from './browser-source.js';
 import { chooseInbox } from './inbox.js';
 import { paths } from './paths.js';
 import { loadState, updateState } from './state.js';
+import { addBrowserSession, browserSessions, removeBrowserSession, selectBrowserSession } from './browser-sessions.js';
 import { exists, flagList, readJson, run, runInteractive, sleep } from './util.js';
+import { browserCandidates, browserEndpoint } from './browser-discovery.js';
+import { managedTabs } from './managed-browser-source.js';
 
 import type { BrowserTab } from './types.js';
 
@@ -118,10 +121,8 @@ export async function browserPrepare(flags) {
   }
 
   const current = await loadState();
-  if (current.browser.active_receipt && flags.profile !== 'active') throw new Error('clear the previous prepared browser state before selecting another tab');
-  const chrome = await ensureChrome({ headless: true });
-  const selected = await selectedBrowserState(flags.profile, url, title, cookieKeys, flags['no-storage'] !== true, flags['tab-id']);
-  if (current.browser.active_receipt) await browserRevoke();
+  const chrome = await ensureChrome({ headless: true, reuse: false });
+  const selected = await selectedBrowserState(flags.profile, url, title, cookieKeys, flags['no-storage'] !== true, flags['tab-id'], flags['source-cdp']);
   await mkdir(paths().home, { recursive: true, mode: 0o700 });
   const bundle = await mkdtemp(path.join(paths().home, 'browser-selection-'));
   const previousBrowserData = process.env.ABRA_BROWSER_DATA_DIR;
@@ -142,10 +143,11 @@ export async function browserPrepare(flags) {
       throw error;
     }
     await updateState(state => {
-      state.browser.active_context_id = installed.receipt.browser_context_id;
-      state.browser.active_receipt = installed.receiptPath;
-      state.browser.chrome_pid = chrome.pid;
-      state.browser.prepared = { profile, url, title, cookie_count: portableCookieCount, omitted_cookie_count: omittedCookieCount, include_storage: flags['no-storage'] !== true };
+      state.browser = addBrowserSession(state.browser, {
+        active_context_id: installed.receipt.browser_context_id, active_receipt: installed.receiptPath,
+        chrome_pid: chrome.pid, chrome_ws_url: chrome.wsUrl,
+        prepared: { profile, url, title, cookie_count: portableCookieCount, omitted_cookie_count: omittedCookieCount, include_storage: flags['no-storage'] !== true }
+      });
     });
     return { prepared: true, profile, url, title, cookie_count: portableCookieCount, omitted_cookie_count: omittedCookieCount, origin_count: selected.origins.length, manifest };
   } finally {
@@ -158,16 +160,17 @@ export async function browserPrepare(flags) {
 export async function browserSend(peer, flags, direction = 'up') {
   await ensureDaemon();
   const profile = typeof flags.profile === 'string' ? await ensureChromeProfile(flags.profile) : null;
-  const chrome = profile ? null : await ensureChrome({ headless: flags.headless === true || (process.platform !== 'darwin' && process.env.ABRA_TELEPORT_DESKTOP !== '1') });
+  const chrome = profile ? null : await ensureChrome({ headless: browserMode(flags) });
   const policy = domainOptions(flags);
   const state = await loadState();
-  const destinationPeer = peer || state.browser.from || state.browser.last_sent?.peer;
+  const session = selectBrowserSession(state.browser, flags.session);
+  const destinationPeer = peer || session.from || state.browser.last_sent?.peer;
   if (!destinationPeer) throw new Error(`browser ${direction} needs a peer id`);
   const args = ['send', destinationPeer, '--kind', KIND, '--source', profile ? `local:${profile}` : `cdp:${chrome.wsUrl}`, ...policy.args];
-  if (state.browser.active_context_id) {
+  if (session.active_context_id) {
     if (profile) throw new Error('revoke the active imported browser context before capturing a Chrome profile');
-    if (state.browser.chrome_pid !== chrome.pid) throw new Error('the imported browser context belonged to an older Chrome process; receive the session again');
-    args.push('--adapter-option', `browser_context_id=${state.browser.active_context_id}`);
+    if (!matchesBrowser(session, chrome)) throw new Error('the imported browser context belonged to an older Chrome process; receive the session again');
+    args.push('--adapter-option', `browser_context_id=${session.active_context_id}`);
   }
   const sent = await abra(args);
   const ack = await waitForAck(sent.snapshot_id, Number(flags.timeout || 120000));
@@ -189,11 +192,7 @@ export async function browserSend(peer, flags, direction = 'up') {
 export async function browserReceive(requestedId, flags) {
   await ensureDaemon();
   if (flags.headless === true && flags.headed === true) throw new Error('choose either --headless or --headed');
-  const chrome = await ensureChrome({ headless: flags.headed === true ? false : flags.headless === true || (process.platform !== 'darwin' && process.env.ABRA_TELEPORT_DESKTOP !== '1'), proxy: flags.proxy });
-  const current = await loadState();
-  if (current.browser.active_receipt && current.browser.chrome_pid === chrome.pid) {
-    throw new Error('an imported browser context is already active; revoke it before receiving another');
-  }
+  const chrome = await ensureChrome({ headless: browserMode(flags), proxy: flags.proxy });
   const item = await chooseInbox(KIND, requestedId, flags.from);
   const materialized = await ensurePrivateMaterialization(item.id);
   const before = await receiptFiles();
@@ -207,12 +206,11 @@ export async function browserReceive(requestedId, flags) {
     const matched = await findNewReceipt(before, manifest.state_sha256);
     await restoreTabLocations(chrome.wsUrl, matched.receipt.browser_context_id, receivedState.tabs);
     await updateState(state => {
-      state.browser.active_context_id = matched.receipt.browser_context_id;
-      state.browser.active_receipt = matched.file;
-      state.browser.chrome_pid = chrome.pid;
-      state.browser.from = item.from;
-      state.browser.received_snapshot_id = item.id;
-      state.browser.received_at = item.received_at;
+      state.browser = addBrowserSession(state.browser, {
+        active_context_id: matched.receipt.browser_context_id, active_receipt: matched.file,
+        chrome_pid: chrome.pid, chrome_ws_url: chrome.wsUrl, from: item.from,
+        received_snapshot_id: item.id, received_at: item.received_at
+      });
     });
     await rm(materialized, { recursive: true, force: true });
     return {
@@ -237,30 +235,26 @@ export async function browserReceive(requestedId, flags) {
   }
 }
 
-export async function browserRevoke() {
+export async function browserRevoke(id?: string) {
   const state = await loadState();
-  if (!state.browser.active_receipt) throw new Error('there is no active imported browser context');
-  const output = await revokeReceipt(state.browser.active_receipt);
-  await updateState(current => {
-    delete current.browser.active_context_id;
-    delete current.browser.active_receipt;
-    delete current.browser.chrome_pid;
-    delete current.browser.prepared;
-  });
-  return { revoked: state.browser.active_receipt, output };
+  const session = selectBrowserSession(state.browser, id);
+  if (!session.active_receipt) throw new Error('there is no active imported browser context');
+  const output = await revokeReceipt(session.active_receipt);
+  await updateState(current => { current.browser = removeBrowserSession(current.browser, session.active_context_id); });
+  return { revoked: session.active_receipt, output };
 }
 
 export async function browserStatus() {
   const state = await loadState();
   const chrome = await chromeStatus();
-  return { chrome, handoff: state.browser };
+  return { chrome, handoff: state.browser, sessions: browserSessions(state.browser), multiple_sessions: true };
 }
 
 export async function browserExec(command) {
   if (!command.length) throw new Error('browser exec needs a command after --');
   const state = await loadState();
   const chrome = await chromeStatus();
-  if (!chrome || !state.browser.active_context_id || state.browser.chrome_pid !== chrome.pid) {
+  if (!chrome || !state.browser.active_context_id || !matchesBrowser(state.browser, chrome)) {
     throw new Error('receive a browser handoff before running an agent command');
   }
   await runInteractive(command[0], command.slice(1), {
@@ -274,17 +268,36 @@ export async function browserExec(command) {
 
 export async function browserClose(flags: { force?: boolean } = {}) {
   const state = await loadState();
-  const chrome = await chromeStatus();
-  if (chrome && state.browser.active_receipt && state.browser.chrome_pid === chrome.pid && flags.force !== true) {
-    throw new Error('revoke the active imported browser context before closing Chrome, or pass --force');
+  // Closing a process would also close unrelated transferred tabs. Revoke each
+  // imported context explicitly before closing or detaching the browser.
+  if (browserSessions(state.browser).length) {
+    if (!flags.force) throw new Error('revoke the active imported browser sessions before closing Chrome');
+    return { stopped: false, kept: true };
   }
-  const result = await stopManagedChrome();
-  if (result.stopped) {
-    await updateState(current => {
-      delete current.browser.active_context_id;
-      delete current.browser.active_receipt;
-      delete current.browser.chrome_pid;
-    });
+  return stopManagedChrome();
+}
+
+export async function sandboxBrowserTabs() {
+  const current = await ensureChrome();
+  const endpoints = new Set([current.wsUrl]);
+  for (const candidate of await browserCandidates()) {
+    try { endpoints.add((await browserEndpoint(candidate)).wsUrl); } catch { /* Browser exited. */ }
   }
-  return result;
+  const tabs: Array<{ id: string; title: string; url: string; host: string; source: string }> = [];
+  for (const source of endpoints) {
+    try { tabs.push(...(await managedTabs(source)).map(tab => ({ ...tab, source }))); } catch { /* Browser exited. */ }
+  }
+  return tabs;
+}
+
+export async function browserSendTab(tabId: string) {
+  const agent = await readJson(path.join(paths().home, 'agent.json'), null);
+  if (!agent?.controller) throw new Error('Connect this sandbox to a laptop first.');
+  const tab = (await sandboxBrowserTabs()).find(item => item.id === tabId);
+  if (!tab) throw new Error('That sandbox tab is no longer available. Refresh the tab list.');
+  await browserPrepare({ profile: 'active', url: tab.url, title: tab.title,
+    'tab-id': tab.id, 'source-cdp': tab.source, 'all-cookies': true });
+  const session = (await loadState()).browser.active_context_id;
+  try { return await browserSend(agent.controller, { 'all-domains': true, session }, 'down'); }
+  finally { await browserRevoke(session); }
 }
