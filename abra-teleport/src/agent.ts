@@ -5,6 +5,7 @@ import { abra, ensureDaemon } from './abra.js';
 import { paths } from './paths.js';
 import { readJson, writeJson, run } from './util.js';
 import { connectionCommand, installerUrl } from './install.js';
+import { isPairingCode, publishPairingTicket, resolvePairingCode } from './pairing-code.js';
 
 import type { AgentDescriptor } from './types.js';
 
@@ -12,6 +13,7 @@ export const AGENT_KIND = 'dev.abra.teleport.agent.v1';
 export const agentFile = () => path.join(paths().home, 'agent.json');
 
 export async function connectAgent(ticket, name = os.hostname()) {
+  if (isPairingCode(ticket || '')) ticket = await resolvePairingCode(ticket);
   if (!ticket?.startsWith('abra-pair/1/')) throw new Error('Paste the pairing command from the Teleport app.');
   const previous = await readJson(agentFile(), null);
   if (previous) {
@@ -37,10 +39,11 @@ export async function connectAgent(ticket, name = os.hostname()) {
   return { connected: true, ...descriptor };
 }
 
-export async function agentTicket() {
+export async function agentTicket({ shortCode = true } = {}) {
   await ensureDaemon();
   const { ticket } = await abra(['pair', 'ticket']);
-  return { ...connectionCommand(ticket, await installerUrl()), expires_in_seconds: 600 };
+  const credential = shortCode ? await publishPairingTicket(ticket) : ticket;
+  return { ...connectionCommand(credential, await installerUrl()), expires_in_seconds: 600 };
 }
 
 export async function listAgents() {

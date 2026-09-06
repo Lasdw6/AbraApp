@@ -8,6 +8,7 @@
     "skipLibCheck": true
   },
   "include": [
-    "scripts/*.ts"
+    "scripts/*.ts",
+    "services/pairing/*.ts"
   ]
 }

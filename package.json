@@ -2,7 +2,7 @@
   "name": "abra-app",
   "private": true,
   "scripts": {
-    "test": "npm --prefix abra-teleport test && npm --prefix desktop test && npm run test:build-safety",
+    "test": "npm --prefix abra-teleport test && npm --prefix desktop test && npm run test:build-safety && npm run test:pairing",
     "desktop": "npm --prefix desktop run desktop",
     "build": "tsx scripts/guard-build.ts npm --prefix desktop run desktop:build",
     "build:windows": "tsx scripts/guard-build.ts npm --prefix desktop run desktop:build:windows",
@@ -10,7 +10,10 @@
     "build:cli": "npm --prefix abra-teleport run build",
     "build:windows:wsl": "tsx scripts/guard-build.ts npm --prefix desktop run desktop:build:windows:wsl",
     "setup:windows": "tsx scripts/build-windows-core.ts && npm run build:cli",
-    "test:build-safety": "tsx --test scripts/test/*.test.ts"
+    "test:build-safety": "tsx --test scripts/test/*.test.ts",
+    "test:pairing": "tsx --test services/pairing/*.test.ts",
+    "build:pairing": "esbuild services/pairing/index.ts --bundle --platform=node --target=node22 --format=cjs --outfile=services/pairing/dist/index.js",
+    "deploy:pairing": "tsx scripts/deploy-pairing.ts"
   },
   "type": "module",
   "workspaces": [
@@ -18,9 +21,11 @@
     "abra-teleport"
   ],
   "devDependencies": {
-    "typescript": "5.9.3",
+    "@aws-sdk/client-dynamodb": "^3.1127.0",
     "@types/node": "^22.0.0",
-    "tsx": "^4.20.0"
+    "esbuild": "^0.28.2",
+    "tsx": "^4.20.0",
+    "typescript": "5.9.3"
   },
   "engines": {
     "node": ">=22"

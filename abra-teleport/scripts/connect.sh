@@ -2,12 +2,14 @@
 # Release packaging fills in the archive URL and digest.
 set -euo pipefail
 TICKET="${1:-}"
-[[ "$TICKET" == abra-pair/1/* ]] || { echo 'Run the connection command from the app.' >&2; exit 1; }
+[[ "$TICKET" == abra-pair/1/* || "$TICKET" =~ ^ABRA-[A-Za-z0-9_-]{22}$ ]] || { echo 'Run the connection command from the app.' >&2; exit 1; }
 CLI="$(command -v abra-teleport || true)"
 if [[ -z "$CLI" && -x "${ABRA_TELEPORT_BIN_DIR:-$HOME/.local/bin}/abra-teleport" ]]; then
   CLI="${ABRA_TELEPORT_BIN_DIR:-$HOME/.local/bin}/abra-teleport"
 fi
-if [[ -z "$CLI" ]] || ! "$CLI" --help | grep -q 'agent connect'; then
+REQUIRED_HELP='agent connect'
+[[ "$TICKET" == ABRA-* ]] && REQUIRED_HELP='ticket-or-code'
+if [[ -z "$CLI" ]] || ! "$CLI" --help | grep -q "$REQUIRED_HELP"; then
   ARCHIVE_URL='@ARCHIVE_URL@'
   EXPECTED='@ARCHIVE_SHA256@'
   [[ "$ARCHIVE_URL" == https://* && "$EXPECTED" =~ ^[a-f0-9]{64}$ ]] || { echo 'This installer has not been packaged for download.' >&2; exit 1; }

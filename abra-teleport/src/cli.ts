@@ -12,8 +12,8 @@ const HELP = `abra-teleport
 Move browser sessions and monitor paired agent sandboxes.
 
 Setup and pairing
-  abra-teleport agent connect <pairing-ticket> [name]
-  abra-teleport agent ticket
+  abra-teleport agent connect <ticket-or-code> [name]
+  abra-teleport agent ticket [--full]
   abra-teleport agent list
   abra-teleport setup
   abra-teleport doctor
@@ -86,7 +86,7 @@ async function dispatch(argv) {
   if (argv[0] === 'agent') {
     const { connectAgent, agentTicket, listAgents, agentRemote } = await import('./agent.js');
     if (argv[1] === 'connect') return output(await connectAgent(argv[2], argv[3]));
-    if (argv[1] === 'ticket') return output(await agentTicket());
+    if (argv[1] === 'ticket') return output(await agentTicket({ shortCode: !argv.includes('--full') }));
     if (argv[1] === 'health') {
       let input = '';
       for await (const chunk of process.stdin) {
