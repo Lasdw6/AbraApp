@@ -12,7 +12,7 @@ The app does not capture previews or run JavaScript through Apple Events. Regula
 
 The header checks connection health every 15 seconds and shows the last successful contact time. Unreachable agents remain paired and can reconnect without setup.
 
-Source lives in `src/`, `electron/`, and `shared/` as TypeScript. The preload and renderer share one typed IPC contract. Install dependencies with `npm ci` from the repository root.
+Source lives in `src/`, `electron/`, and `shared/` as TypeScript. The preload and renderer share one typed IPC contract. Electron calls the Teleport library through a persistent worker pool, which keeps command environments isolated while avoiding a new CLI process for each request. The standalone `abra-teleport` command uses the same entry point. Install dependencies with `npm ci` from the repository root.
 
 The spoon logo source is `assets/spoon.svg`. After editing it, run `npm run icons` from the repository root to regenerate the app and website assets, including Mac and Windows icons. Commit the generated assets with the source.
 

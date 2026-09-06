@@ -26,6 +26,23 @@ test('agent rejects arbitrary commands and pins browser destinations', () => {
   assert.throws(() => agentArguments(['browser', 'send-tab', '../bad'], agent));
 });
 
+test('binary lookup follows a changed explicit runtime', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'abra-binary-test-'));
+  const previous = process.env.ABRA_BIN;
+  try {
+    for (const name of ['first', 'second']) {
+      const binary = path.join(directory, name);
+      await writeFile(binary, 'fixture');
+      process.env.ABRA_BIN = binary;
+      assert.equal(await abraBinary(), binary);
+    }
+  } finally {
+    if (previous === undefined) delete process.env.ABRA_BIN;
+    else process.env.ABRA_BIN = previous;
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test('app upgrades restart the managed daemon and preserve its identity', { skip: process.env.ABRA_TELEPORT_INTEGRATION !== '1', timeout: 90000 }, async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'abra-upgrade-test-'));
   const home = path.join(directory, 'home');
@@ -42,23 +59,33 @@ test('app upgrades restart the managed daemon and preserve its identity', { skip
   try {
     await copyFile(await abraBinary(), oldBinary);
     await copyFile(oldBinary, newBinary);
-    await command(oldBinary, ['setup']);
+    const startups = await Promise.all([command(oldBinary, ['setup']), command(oldBinary, ['setup'])]);
+    assert.equal(startups[0].peer_id, startups[1].peer_id, 'concurrent setup shares one daemon');
     const original = await state();
+    const pidFile = path.join(home, 'abra', 'daemon.pid');
+    assert.equal(JSON.parse(await readFile(pidFile, 'utf8')).pid, original.pid);
+    // Simulate a pre-migration Teleport daemon with only its legacy record.
+    await rm(pidFile);
     const before = await command(oldBinary, ['doctor']);
     const legacy = { ...original };
     delete legacy.binary_stamp;
+    await writeFile(stateFile, JSON.stringify({ ...legacy, started_at: 'a different process' }));
+    await assert.rejects(command(oldBinary, ['daemon', 'stop']), /not the recorded Abra daemon/);
+    assert.equal((await command(oldBinary, ['doctor'])).daemon.peer_id, before.daemon.peer_id);
+    await rm(pidFile);
     await writeFile(stateFile, JSON.stringify(legacy));
-    assert.ok((await command(newBinary, ['agent', 'ticket'])).command);
+    assert.ok((await command(newBinary, ['agent', 'ticket', '--full'])).command);
     const upgraded = await state();
     assert.notEqual(upgraded.pid, original.pid);
     assert.equal(upgraded.binary, newBinary);
     assert.ok(upgraded.binary_stamp);
+    assert.equal(JSON.parse(await readFile(pidFile, 'utf8')).pid, upgraded.pid);
     assert.equal((await command(newBinary, ['doctor'])).daemon.peer_id, before.daemon.peer_id);
-    await command(newBinary, ['agent', 'ticket']);
+    await command(newBinary, ['agent', 'ticket', '--full']);
     assert.equal((await state()).pid, upgraded.pid, 'unchanged builds keep the daemon running');
     const modified = new Date(Date.now() + 2000);
     await utimes(newBinary, modified, modified);
-    await command(newBinary, ['agent', 'ticket']);
+    await command(newBinary, ['agent', 'ticket', '--full']);
     assert.notEqual((await state()).pid, upgraded.pid, 'replacement at the same path restarts the daemon');
     assert.equal((await command(newBinary, ['doctor'])).daemon.peer_id, before.daemon.peer_id);
   } finally {
@@ -79,7 +106,7 @@ test('pairing command connects two isolated agents and controls the remote CLI',
   try {
     await mkdir(path.join(a, 'abra/adapters'), { recursive: true });
     await writeFile(path.join(a, 'abra/adapters/registry.json'), JSON.stringify(['/removed/old-wrapper/adapters/codex-session']));
-    const ticket = await command(a, ['agent', 'ticket']);
+    const ticket = await command(a, ['agent', 'ticket', '--full']);
     const token = ticket.command.match(/'([^']+)'/)[1];
     const connected = await command(b, ['agent', 'connect', token, 'test sandbox']);
     assert.equal(connected.connected, true);
@@ -109,7 +136,7 @@ test('pairing command connects two isolated agents and controls the remote CLI',
     assert.equal(lost.status, 'unreachable'); assert.equal(lost.last_seen, live.last_seen);
     await command(b, ['setup']);
     assert.equal((await health()).status, 'connected');
-    const nextTicket = await command(a, ['agent', 'ticket']);
+    const nextTicket = await command(a, ['agent', 'ticket', '--full']);
     const reconnected = await command(b, ['agent', 'connect', nextTicket.command.match(/'([^']+)'/)[1], 'test sandbox']);
     assert.equal(reconnected.peer_id, connected.peer_id);
     assert.equal(reconnected.capsule_id, connected.capsule_id);

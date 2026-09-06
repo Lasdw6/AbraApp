@@ -1,10 +1,10 @@
 import { readFile, mkdir, writeFile, rename } from 'node:fs/promises';
-import { spawn } from 'node:child_process';
 import * as path from 'node:path';
 
-import type { RuntimePaths, AgentDescriptor as Agent } from '../shared/contracts.js';
+import type { AgentDescriptor as Agent } from '../shared/contracts.js';
+import type { TeleportService } from './teleport.js';
 
-function createConnections({ home, runtime }: { home: string; runtime: () => RuntimePaths }) {
+function createConnections({ home, teleport }: { home: string; teleport: TeleportService }) {
   const stateHome = process.env.ABRA_TELEPORT_HOME || path.join(home, '.abra-teleport');
   const file = path.join(stateHome, 'selected-agent.json');
   const namesFile = path.join(stateHome, 'agent-names.json');
@@ -21,35 +21,13 @@ function createConnections({ home, runtime }: { home: string; runtime: () => Run
     try { return named(JSON.parse(await readFile(file, 'utf8')), await names()); }
     catch (error) { if (error.code === 'ENOENT') return null; throw error; }
   }
-  async function run<T = any>(args: string[], request?: unknown, timeout = 540000): Promise<T> {
-    const rt = runtime();
-    return new Promise<T>((resolve, reject) => {
-      const child = spawn(rt.node, [path.join(rt.wrapper, 'bin/abra-teleport.js'), ...args], {
-        timeout,
-        windowsHide: true,
-        stdio: ['pipe', 'pipe', 'pipe'],
-        env: { ...process.env, ...(rt.asNode ? { ELECTRON_RUN_AS_NODE: '1' } : {}), ABRA_BIN: rt.abra,
-          ABRA_BROWSER_ADAPTER: rt.adapter, ABRA_OBSERVER: rt.observer, ABRA_TELEPORT_DESKTOP: '1',
-          PATH: [path.dirname(rt.node), process.env.PATH, '/usr/local/bin', '/opt/homebrew/bin', '/usr/bin', '/bin'].filter(Boolean).join(path.delimiter) },
-      });
-      let stdout = '', stderr = '';
-      child.stdout.on('data', chunk => { stdout += chunk; if (stdout.length > 32 * 1024 * 1024) child.kill(); });
-      child.stderr.on('data', chunk => { stderr = (stderr + chunk).slice(-8000); });
-      child.once('error', reject);
-      child.once('close', code => {
-        if (code !== 0) return reject(new Error(stderr.trim() || `Agent command exited ${code}.`));
-        try { resolve(JSON.parse(stdout)); } catch { reject(new Error('Teleport returned an unreadable response.')); }
-      });
-      child.stdin.on('error', () => {});
-      child.stdin.end(request ? JSON.stringify(request) : '');
-    });
-  }
   async function invoke<T = any>(args: string[], request?: unknown, timeout = 540000): Promise<T> {
     // Health, agent discovery, and handoff restoration can start together.
     // Finish any daemon upgrade once before letting those requests proceed.
-    ready ??= run(['setup'], undefined, 20000).then(() => {}, error => { ready = undefined; throw error; });
+    const execute = teleport.run.bind(teleport);
+    ready ??= execute(['setup'], undefined, 75000).then(() => {}, error => { ready = undefined; throw error; });
     await ready;
-    return run<T>(args, request, timeout);
+    return execute<T>(args, request, timeout);
   }
   async function list() {
     const agents = await invoke<Agent[]>(['agent', 'list']);

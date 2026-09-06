@@ -82,7 +82,7 @@ export function agentArguments(argv: unknown, agent: { controller: string }) {
     const index = argv[2] === '--' ? 4 : 3;
     const script = path.basename(argv[index] || '');
     if (!['browser-cloud-screenshot.js'].includes(script)) throw new Error('Only Teleport browser actions are allowed.');
-    return ['browser', 'exec', '--', process.execPath, path.resolve(import.meta.dirname, '../scripts', script), ...argv.slice(index + 1)];
+    return ['browser', 'exec', '--', process.env.ABRA_NODE_BIN || process.execPath, path.resolve(import.meta.dirname, '../scripts', script), ...argv.slice(index + 1)];
   }
   if (group === 'browser' && action === 'receive') {
     if (!/^[0-9a-f]{64}$/.test(argv[2] || '')) throw new Error('Invalid browser handoff.');
@@ -104,6 +104,6 @@ export async function handleAgentControl(request) {
   if (!agent || request.capsule_id !== agent.capsule_id) throw new Error('This control capsule is not enabled on this agent.');
   if (request.op !== 'instruct') throw new Error('Unsupported agent control.');
   const args = agentArguments(JSON.parse(request.text).argv, agent);
-  const { stdout } = await run(process.execPath, [path.resolve(import.meta.dirname, '../bin/abra-teleport.js'), ...args], { timeout: 540000 });
+  const { stdout } = await run(process.env.ABRA_NODE_BIN || process.execPath, [path.resolve(import.meta.dirname, '../bin/abra-teleport.js'), ...args], { timeout: 540000 });
   return { stdout };
 }

@@ -240,7 +240,7 @@ test('manual override sends selected restricted cookies and storage through a re
   const fixtureChrome = path.join(root, 'chrome');
   await writeFile(fixtureChrome, '#!/bin/bash\nexec \"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome\" --ignore-certificate-errors \"$@\"\n', { mode: 0o700 });
   process.env.CHROME_BIN = fixtureChrome;
-  process.env.ABRA_BIN = path.resolve(import.meta.dirname, '../../abra/target/release/abra');
+  process.env.ABRA_BIN ||= path.resolve(import.meta.dirname, '../../abra/target/release/abra');
   process.env.ABRA_BROWSER_ADAPTER = path.resolve(import.meta.dirname, '../../abra/adapters/browser-session');
   process.env.ABRA_TELEPORT_TRANSPORT = 'tcp';
   process.env.ABRA_TELEPORT_BROWSER_SOURCE = 'managed';
