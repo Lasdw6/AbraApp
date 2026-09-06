@@ -4,6 +4,15 @@ Abra Teleport runs directly on Windows x64 with Electron, a native Rust engine,
 and Windows named pipes. WSL, Bash, and Python are not required on the laptop.
 The paired agent still runs in a Linux sandbox.
 
+## Install
+
+Download the Windows installer from [abra.vividh.lol](https://abra.vividh.lol),
+run the `.exe`, then open Abra Teleport from the Start menu. Install Google
+Chrome if it is not already on your computer. The installer includes the Abra
+runtime; WSL, Node.js, Rust, and PowerShell commands are not needed.
+
+The native preview targets Windows x64 and is unsigned.
+
 ## Develop
 
 Install Node.js 22+, Git, Rust 1.91+ with the `x86_64-pc-windows-msvc` toolchain,
@@ -60,13 +69,21 @@ This builds the release engine and creates a per-user NSIS installer under
 the native engine, the adapters, and the verified Linux agent archive pinned by
 `docs/install.sh`. The build needs internet access to download release assets.
 The installed app does not require Node or Rust on the destination computer.
-Local builds are unsigned; configure release code signing before public distribution.
+Preview builds are unsigned; configure code signing for production releases.
 
 ## Verify
 
 ```powershell
 npm run check
 npm test
+```
+
+These basic checks run in CI on both Mac and Windows. Desktop builds run
+manually and check the installed runtime before publishing.
+
+For an optional browser integration check:
+
+```powershell
 $env:ABRA_TELEPORT_BROWSER_INTEGRATION = '1'
 npm test
 ```
