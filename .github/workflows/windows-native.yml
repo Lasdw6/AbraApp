@@ -1,79 +1,31 @@
-name: Desktop builds
+name: Windows installer diagnosis
 on:
   workflow_dispatch:
-
 permissions:
   contents: read
-
+  actions: read
 jobs:
-  build:
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: windows-2022
-            command: npm run build:windows
-            artifact: Abra-Teleport-Windows-native-x64
-            file: desktop/dist/windows-native/*-Setup.exe
-          - os: macos-15
-            command: npm run build
-            artifact: Abra-Teleport-mac-arm64
-            file: desktop/dist/Abra-Teleport-mac-arm64.zip
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 30
+  smoke:
+    runs-on: windows-2022
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
-        with:
-          submodules: recursive
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-          cache: npm
-      - run: rustup update stable --no-self-update
-      - run: rustup default stable
-      - run: npm ci
-      - run: npm run check
-      - run: ${{ matrix.command }}
-      - uses: actions/upload-artifact@v4
-        if: runner.os == 'Windows'
+      - uses: actions/download-artifact@v4
         with:
-          name: ${{ matrix.artifact }}
-          path: ${{ matrix.file }}
-          if-no-files-found: error
-      - name: Check the Windows installer
-        if: runner.os == 'Windows'
+          name: Abra-Teleport-Windows-native-x64
+          run-id: 34059133524
+          github-token: ${{ github.token }}
+          path: installer
+      - name: Install
         shell: pwsh
         run: |
-          $installer = Get-ChildItem desktop/dist/windows-native/*-Setup.exe | Select-Object -First 1
+          $installer = Get-ChildItem installer/*-Setup.exe | Select-Object -First 1
           $destination = Join-Path $env:RUNNER_TEMP 'Abra installed test'
           $process = Start-Process -FilePath $installer.FullName -ArgumentList "/S /D=$destination" -Wait -PassThru
           if ($process.ExitCode -ne 0) { throw "Installer exited with $($process.ExitCode)" }
-          if (!(Test-Path (Join-Path $destination 'Abra Teleport.exe'))) { throw 'Installed app is missing' }
-          $env:ELECTRON_RUN_AS_NODE = '1'
-          $runtime = Start-Process -FilePath (Join-Path $destination 'Abra Teleport.exe') -ArgumentList '-e "console.log(process.versions.node)"' -Wait -PassThru -NoNewWindow
-          if ($runtime.ExitCode -ne 0) { throw "Installed Node runtime exited with $($runtime.ExitCode)" }
-          & (Join-Path $destination 'resources/Runtime/abra.exe') --version
-          if ($LASTEXITCODE -ne 0) { throw 'Installed Abra runtime did not start' }
-          $core = Join-Path $destination 'resources/Runtime/abra.exe'
-          $root = Join-Path $env:RUNNER_TEMP 'abra smoke state'
-          try {
-            & $core --root $root --json daemon --background --yes --transport tcp | ConvertFrom-Json | Out-Null
-            if ($LASTEXITCODE -ne 0) { throw 'Installed daemon did not start' }
-          } finally {
-            & $core --root $root --json stop | ConvertFrom-Json | Out-Null
-            if ($LASTEXITCODE -ne 0) { throw 'Installed daemon did not stop' }
-          }
-      - name: Check and zip the Mac app
-        if: runner.os == 'macOS'
-        shell: bash
-        run: |
-          app="desktop/dist/mac-arm64/Abra Teleport.app"
-          ELECTRON_RUN_AS_NODE=1 "$app/Contents/MacOS/Abra Teleport" -e 'console.log(process.versions.node)'
-          "$app/Contents/Resources/Runtime/abra" --version
-          ditto -c -k --sequesterRsrc --keepParent "$app" desktop/dist/Abra-Teleport-mac-arm64.zip
-      - uses: actions/upload-artifact@v4
-        if: runner.os == 'macOS'
-        with:
-          name: ${{ matrix.artifact }}
-          path: ${{ matrix.file }}
-          if-no-files-found: error
+          "ABRA_INSTALL_DIR=$destination" >> $env:GITHUB_ENV
+      - name: Diagnose installed runtime
+        run: node scripts/diagnose-installed.cjs
