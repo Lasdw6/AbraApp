@@ -49,20 +49,8 @@ jobs:
           $process = Start-Process -FilePath $installer.FullName -ArgumentList "/S /D=$destination" -Wait -PassThru
           if ($process.ExitCode -ne 0) { throw "Installer exited with $($process.ExitCode)" }
           if (!(Test-Path (Join-Path $destination 'Abra Teleport.exe'))) { throw 'Installed app is missing' }
-          $env:ELECTRON_RUN_AS_NODE = '1'
-          $runtime = Start-Process -FilePath (Join-Path $destination 'Abra Teleport.exe') -ArgumentList '-e "console.log(process.versions.node)"' -Wait -PassThru -NoNewWindow
-          if ($runtime.ExitCode -ne 0) { throw "Installed Node runtime exited with $($runtime.ExitCode)" }
-          & (Join-Path $destination 'resources/Runtime/abra.exe') --version
-          if ($LASTEXITCODE -ne 0) { throw 'Installed Abra runtime did not start' }
-          $core = Join-Path $destination 'resources/Runtime/abra.exe'
-          $root = Join-Path $env:RUNNER_TEMP 'abra smoke state'
-          try {
-            & $core --root $root --json daemon --background --yes --transport tcp | ConvertFrom-Json | Out-Null
-            if ($LASTEXITCODE -ne 0) { throw 'Installed daemon did not start' }
-          } finally {
-            & $core --root $root --json stop | ConvertFrom-Json | Out-Null
-            if ($LASTEXITCODE -ne 0) { throw 'Installed daemon did not stop' }
-          }
+          npx tsx scripts/check-windows-install.ts "$destination"
+          if ($LASTEXITCODE -ne 0) { throw "Installed runtime check failed" }
       - name: Check and zip the Mac app
         if: runner.os == 'macOS'
         shell: bash
