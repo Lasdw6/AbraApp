@@ -2,14 +2,16 @@
 # Release packaging fills in the archive URL and digest.
 set -euo pipefail
 TICKET="${1:-}"
-[[ "$TICKET" == abra-pair/1/* ]] || { echo 'Run the connection command from the app.' >&2; exit 1; }
+[[ "$TICKET" == abra-pair/1/* || "$TICKET" =~ ^ABRA-[A-Za-z0-9_-]{22}$ ]] || { echo 'Run the connection command from the app.' >&2; exit 1; }
 CLI="$(command -v abra-teleport || true)"
 if [[ -z "$CLI" && -x "${ABRA_TELEPORT_BIN_DIR:-$HOME/.local/bin}/abra-teleport" ]]; then
   CLI="${ABRA_TELEPORT_BIN_DIR:-$HOME/.local/bin}/abra-teleport"
 fi
-if [[ -z "$CLI" ]] || ! "$CLI" --help | grep -q 'agent connect'; then
-  ARCHIVE_URL='https://github.com/Lasdw6/AbraApp/releases/download/v0.3.0-rc.3/abra-teleport-agent.tar.gz'
-  EXPECTED='8f2771f6ab99d826f02e5014d20ec8018c3e7864d6183635824669b30a95477d'
+REQUIRED_HELP='agent connect'
+[[ "$TICKET" == ABRA-* ]] && REQUIRED_HELP='ticket-or-code'
+if [[ -z "$CLI" ]] || ! "$CLI" --help | grep -q "$REQUIRED_HELP"; then
+  ARCHIVE_URL='https://github.com/Lasdw6/AbraApp/releases/download/agent-v0.2.1/abra-teleport-agent.tar.gz'
+  EXPECTED='ff0c5189f1d8b9c7f60b25a7a7b6d11e2c1ab4d1e8c1415793d7a6d14e36bdb5'
   [[ "$ARCHIVE_URL" == https://* && "$EXPECTED" =~ ^[a-f0-9]{64}$ ]] || { echo 'This installer has not been packaged for download.' >&2; exit 1; }
   STAGE="$(mktemp -d)"
   trap 'rm -rf "$STAGE"' EXIT
