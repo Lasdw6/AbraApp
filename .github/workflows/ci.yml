@@ -1,4 +1,4 @@
-name: TypeScript checks
+name: Basic checks
 on: [push, pull_request]
 
 permissions:
@@ -6,7 +6,12 @@ permissions:
 
 jobs:
   check:
-    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15, windows-2022]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
         with:

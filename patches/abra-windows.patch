@@ -281,8 +281,8 @@ index 892dab9..6708270 100644
 +    }
 +    #[cfg(windows)]
 +    {
-+        let status = windows_command("taskkill.exe").args(["/PID", &record.pid.to_string(), "/F"]).status()?;
-+        if !status.success() { return Err("could not stop recorded daemon".into()); }
++        let output = windows_command("taskkill.exe").args(["/PID", &record.pid.to_string(), "/F"]).output()?;
++        if !output.status.success() { return Err("could not stop recorded daemon".into()); }
 +    }
      let deadline = tokio::time::Instant::now() + STOP_TIMEOUT;
      while is_alive(record.pid) {

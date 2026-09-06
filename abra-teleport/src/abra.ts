@@ -108,7 +108,7 @@ export async function ensureDaemon() {
     if (!String(error.message).includes('daemon already running') || !await daemonStatus()) throw error;
   }
   const record = await readJson(path.join(paths().abraRoot, 'daemon.pid'));
-  await writeJson(paths().daemonState, { ...record, binary_stamp: binaryStamp });
+  await writeJson(paths().daemonState, { ...record, binary, binary_stamp: binaryStamp });
   await ensureAdapters();
   return { ...await daemonStatus(), started: true };
 }

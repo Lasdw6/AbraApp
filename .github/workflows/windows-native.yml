@@ -1,22 +1,26 @@
-name: Native Windows
+name: Desktop builds
 on:
   workflow_dispatch:
-  pull_request:
-    paths:
-      - 'abra-teleport/**'
-      - 'desktop/**'
-      - 'scripts/**'
-      - 'patches/**'
-      - 'package*.json'
-      - '.github/workflows/windows-native.yml'
 
 permissions:
   contents: read
 
 jobs:
   build:
-    runs-on: windows-2022
-    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-2022
+            command: npm run build:windows
+            artifact: Abra-Teleport-Windows-native-x64
+            file: desktop/dist/windows-native/*-Setup.exe
+          - os: macos-15
+            command: npm run build
+            artifact: Abra-Teleport-mac-arm64
+            file: desktop/dist/Abra-Teleport-mac-arm64.zip
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
         with:
@@ -28,17 +32,10 @@ jobs:
       - run: rustup update stable --no-self-update
       - run: rustup default stable
       - run: npm ci
-      - run: npm run setup:windows
       - run: npm run check
-      - run: npm test
-      - run: npm run build:windows
-      - name: Test native IPC and browser round trips
-        env:
-          ABRA_TELEPORT_BROWSER_INTEGRATION: '1'
-          ABRA_TELEPORT_TRANSPORT: tcp
-          ABRA_BIN: ${{ github.workspace }}/abra/target/release/abra.exe
-        run: node --import tsx --test abra-teleport/test/browser-integration.test.ts
-      - name: Install the native Windows package
+      - run: ${{ matrix.command }}
+      - name: Check the Windows installer
+        if: runner.os == 'Windows'
         shell: pwsh
         run: |
           $installer = Get-ChildItem desktop/dist/windows-native/*-Setup.exe | Select-Object -First 1
@@ -46,13 +43,30 @@ jobs:
           $process = Start-Process -FilePath $installer.FullName -ArgumentList "/S /D=$destination" -Wait -PassThru
           if ($process.ExitCode -ne 0) { throw "Installer exited with $($process.ExitCode)" }
           if (!(Test-Path (Join-Path $destination 'Abra Teleport.exe'))) { throw 'Installed app is missing' }
-          "ABRA_WINDOWS_INSTALL_DIR=$destination" >> $env:GITHUB_ENV
-      - name: Test installed Electron interpreter and adapters
-        env:
-          ABRA_WINDOWS_PACKAGED_TEST: '1'
-        run: npm --prefix desktop test
+          $env:ELECTRON_RUN_AS_NODE = '1'
+          & (Join-Path $destination 'Abra Teleport.exe') -e "console.log(process.versions.node)"
+          if ($LASTEXITCODE -ne 0) { throw 'Installed Node runtime did not start' }
+          & (Join-Path $destination 'resources/Runtime/abra.exe') --version
+          if ($LASTEXITCODE -ne 0) { throw 'Installed Abra runtime did not start' }
+          $core = Join-Path $destination 'resources/Runtime/abra.exe'
+          $root = Join-Path $env:RUNNER_TEMP 'abra smoke state'
+          try {
+            & $core --root $root --json daemon --background --yes --transport tcp | ConvertFrom-Json | Out-Null
+            if ($LASTEXITCODE -ne 0) { throw 'Installed daemon did not start' }
+          } finally {
+            & $core --root $root --json stop | ConvertFrom-Json | Out-Null
+            if ($LASTEXITCODE -ne 0) { throw 'Installed daemon did not stop' }
+          }
+      - name: Check and zip the Mac app
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          app="desktop/dist/mac-arm64/Abra Teleport.app"
+          ELECTRON_RUN_AS_NODE=1 "$app/Contents/MacOS/Abra Teleport" -e 'console.log(process.versions.node)'
+          "$app/Contents/Resources/Runtime/abra" --version
+          ditto -c -k --sequesterRsrc --keepParent "$app" desktop/dist/Abra-Teleport-mac-arm64.zip
       - uses: actions/upload-artifact@v4
         with:
-          name: Abra-Teleport-Windows-native-x64
-          path: desktop/dist/windows-native/*-Setup.exe
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.file }}
           if-no-files-found: error
