@@ -38,7 +38,16 @@ jobs:
           ABRA_TELEPORT_TRANSPORT: tcp
           ABRA_BIN: ${{ github.workspace }}/abra/target/release/abra.exe
         run: node --import tsx --test abra-teleport/test/browser-integration.test.ts
-      - name: Test bundled Electron interpreter and adapters
+      - name: Install the native Windows package
+        shell: pwsh
+        run: |
+          $installer = Get-ChildItem desktop/dist/windows-native/*-Setup.exe | Select-Object -First 1
+          $destination = Join-Path $env:RUNNER_TEMP 'Abra installed test'
+          $process = Start-Process -FilePath $installer.FullName -ArgumentList "/S /D=$destination" -Wait -PassThru
+          if ($process.ExitCode -ne 0) { throw "Installer exited with $($process.ExitCode)" }
+          if (!(Test-Path (Join-Path $destination 'Abra Teleport.exe'))) { throw 'Installed app is missing' }
+          "ABRA_WINDOWS_INSTALL_DIR=$destination" >> $env:GITHUB_ENV
+      - name: Test installed Electron interpreter and adapters
         env:
           ABRA_WINDOWS_PACKAGED_TEST: '1'
         run: npm --prefix desktop test

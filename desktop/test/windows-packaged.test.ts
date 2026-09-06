@@ -9,7 +9,7 @@ import test from 'node:test';
 test('packaged Windows runtime pairs and executes adapters from paths with spaces', {
   skip: process.platform !== 'win32' || process.env.ABRA_WINDOWS_PACKAGED_TEST !== '1', timeout: 120000,
 }, () => {
-  const unpacked = path.resolve(import.meta.dirname, '../dist/windows-native/win-unpacked');
+  const unpacked = process.env.ABRA_WINDOWS_INSTALL_DIR || path.resolve(import.meta.dirname, '../dist/windows-native/win-unpacked');
   const app = path.join(unpacked, 'Abra Teleport.exe');
   const runtime = path.join(unpacked, 'resources/Runtime');
   const root = mkdtempSync(path.join(os.tmpdir(), 'abra packaged pair '));

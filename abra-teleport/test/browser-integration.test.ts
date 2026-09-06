@@ -1,8 +1,8 @@
 import https from 'node:https';
-import { execFile } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import { promisify } from 'node:util';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm, readFile, writeFile } from 'node:fs/promises';
+import { mkdtemp, rm, readFile } from 'node:fs/promises';
 import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
@@ -10,13 +10,16 @@ import test from 'node:test';
 import { abra, ensureDaemon, stopDaemon } from '../build/src/abra.js';
 import { connectAgent, listAgents, agentRemote } from '../build/src/agent.js';
 import { browserStatus, browserPrepare, browserReceive, browserRevoke, browserSend } from '../build/src/browser.js';
-import { ensureChrome, stopChrome } from '../build/src/chrome.js';
+import { chromeBinary, ensureChrome, stopChrome } from '../build/src/chrome.js';
 import { capture } from '../../abra/adapters/browser-session/lib/browser.js';
 import { CDP, attachPage, evalValue, waitForLoad } from '../../abra/adapters/browser-session/lib/cdp.js';
 
 import { browserChromeTabs, browserCookieInventory, selectedBrowserState } from '../build/src/browser-source.js';
 
 import { sandboxCommand } from '../build/src/sandbox.js';
+import { paths } from '../build/src/paths.js';
+import { secureDir, sleep, writeJson } from '../build/src/util.js';
+import { waitForBrowser } from '../build/src/browser-discovery.js';
 
 const enabled = process.env.ABRA_TELEPORT_BROWSER_INTEGRATION === '1';
 
@@ -235,26 +238,53 @@ test('manual override sends selected restricted cookies and storage through a re
   const root = await mkdtemp(path.join(os.tmpdir(), 'abra-ov-'));
   const homes = [path.join(root, 'a'), path.join(root, 'b')];
   const original = { ...process.env };
-  await promisify(execFile)('/usr/bin/openssl', ['req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-keyout', path.join(root, 'key.pem'), '-out', path.join(root, 'cert.pem'), '-days', '1', '-subj', '/CN=127.0.0.1']);
+  const openssl = process.platform === 'win32'
+    ? path.join(process.env.ProgramFiles || 'C:\\Program Files', 'Git', 'usr', 'bin', 'openssl.exe') : 'openssl';
+  await promisify(execFile)(openssl, ['req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-keyout', path.join(root, 'key.pem'), '-out', path.join(root, 'cert.pem'), '-days', '1', '-subj', '/CN=127.0.0.1']);
   const web = await withServer({ key: await readFile(path.join(root, 'key.pem')), cert: await readFile(path.join(root, 'cert.pem')) });
-  const fixtureChrome = path.join(root, 'chrome');
-  await writeFile(fixtureChrome, '#!/bin/bash\nexec \"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome\" --ignore-certificate-errors \"$@\"\n', { mode: 0o700 });
-  process.env.CHROME_BIN = fixtureChrome;
-  process.env.ABRA_BIN = path.resolve(import.meta.dirname, '../../abra/target/release/abra');
+  const browsers: ReturnType<typeof spawn>[] = [];
+  // Only these temporary fixture browsers accept the local HTTPS certificate.
+  async function fixtureBrowser() {
+    await secureDir(paths().chromeProfile);
+    const child = spawn(await chromeBinary(), [
+      `--user-data-dir=${paths().chromeProfile}`, '--remote-debugging-address=127.0.0.1',
+      '--remote-debugging-port=0', '--headless=new', '--ignore-certificate-errors',
+      '--no-first-run', '--no-default-browser-check',
+      ...(process.getuid?.() === 0 ? ['--no-sandbox'] : []), 'about:blank',
+    ], { windowsHide: true, stdio: 'ignore' });
+    browsers.push(child);
+    let failure: Error | undefined;
+    child.once('error', error => { failure = error; });
+    let port = 0;
+    for (let attempt = 0; attempt < 300; attempt++) {
+      if (failure) throw failure;
+      if (child.exitCode !== null) throw new Error('Fixture Chrome exited during startup.');
+      try { port = Number((await readFile(path.join(paths().chromeProfile, 'DevToolsActivePort'), 'utf8')).split('\n')[0]); } catch {}
+      if (port) break;
+      await sleep(50);
+    }
+    assert.ok(port, 'fixture Chrome exposes a debugging port');
+    const browser = await waitForBrowser(`http://127.0.0.1:${port}`, async () => child.exitCode === null);
+    await writeJson(paths().chromeState, { ...browser, owned: false, pid: null, proxy: null });
+    return browser;
+  }
+  process.env.ABRA_BIN ||= path.resolve(import.meta.dirname, '../../abra/target/release', process.platform === 'win32' ? 'abra.exe' : 'abra');
   process.env.ABRA_BROWSER_ADAPTER = path.resolve(import.meta.dirname, '../../abra/adapters/browser-session');
   process.env.ABRA_TELEPORT_TRANSPORT = 'tcp';
   process.env.ABRA_TELEPORT_BROWSER_SOURCE = 'managed';
   delete process.env.ABRA_TELEPORT_CDP_URL;
   try {
     await selectDevice(homes[0]); await ensureDaemon();
-    const source = await ensureChrome({ headless: true });
+    const source = await fixtureBrowser();
     await seedBrowser(source.wsUrl, web.url);
     const cdp = await new CDP(source.wsUrl).connect();
     try { await cdp.send('Storage.setCookies', { cookies: [{ name: 'device_bound_session', value: 'fixture', domain: '127.0.0.1', path: '/', httpOnly: true, secure: true }] }); }
     finally { cdp.close(); }
     const ticket = (await abra(['pair', 'ticket'])).ticket;
-    await selectDevice(homes[1]); await connectAgent(ticket, 'override fixture');
-    await ensureChrome({ headless: true });
+    await selectDevice(homes[1]);
+    process.env.ABRA_TELEPORT_CDP_URL = (await fixtureBrowser()).wsUrl;
+    await connectAgent(ticket, 'override fixture');
+    delete process.env.ABRA_TELEPORT_CDP_URL;
     await selectDevice(homes[0]);
     const [agent] = await listAgents();
     const tab = (await browserChromeTabs()).find(item => item.url === web.url)!;
@@ -283,6 +313,13 @@ test('manual override sends selected restricted cookies and storage through a re
   } finally {
     await new Promise(resolve => web.server.close(resolve));
     for (const home of homes) { await selectDevice(home); await stopChrome().catch(() => {}); await stopDaemon().catch(() => {}); }
+    for (const child of browsers) {
+      if (child.exitCode === null) {
+        const exited = new Promise<void>(resolve => child.once('close', () => resolve()));
+        child.kill();
+        await exited;
+      }
+    }
     Object.keys(process.env).forEach(key => { if (!(key in original)) delete process.env[key]; }); Object.assign(process.env, original);
     await rm(root, { recursive: true, force: true, maxRetries: 20, retryDelay: 200 });
   }
