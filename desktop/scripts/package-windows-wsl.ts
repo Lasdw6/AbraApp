@@ -42,7 +42,7 @@ async function main() {
   // package.json. Two concurrent copies to Runtime/abra can corrupt the binary.
   const config = path.join(stage, 'builder.json');
   await fs.writeFile(config, JSON.stringify({ ...pkg.build, extraResources,
-    linux: { executableName: 'abra-teleport', category: 'Development' },
+    linux: { icon: 'public/icon.png', executableName: 'abra-teleport', category: 'Development' },
     directories: { output: path.join(stage, 'build') } }));
   await build({ projectDir: desktop, targets: Platform.LINUX.createTarget(['dir'], Arch.x64), config });
   const packaged = await fs.readFile(path.join(stage, 'build/linux-unpacked/resources/Runtime/abra'));
@@ -56,8 +56,9 @@ async function main() {
     await fs.copyFile(path.join(repo, 'scripts', file), path.join(bundle, file));
   }
   await fs.copyFile(path.join(repo, 'WINDOWS-WSL.md'), path.join(bundle, 'README.md'));
+  await fs.copyFile(path.join(desktop, 'assets/icon.ico'), path.join(bundle, 'icon.ico'));
   const hashes: Record<string, string> = {};
-  for (const file of ['app.tar.gz', 'install-wsl.sh', 'launch-wsl.sh']) hashes[file] = digest(await fs.readFile(path.join(bundle, file)));
+  for (const file of ['app.tar.gz', 'install-wsl.sh', 'launch-wsl.sh', 'icon.ico']) hashes[file] = digest(await fs.readFile(path.join(bundle, file)));
   await fs.writeFile(path.join(bundle, 'manifest.json'), JSON.stringify({ version: pkg.version, arch: 'x64', sha256: hashes }, null, 2));
   const output = path.join(desktop, 'dist/Abra-Teleport-Windows-WSL-x64.zip');
   await fs.rm(output, { force: true });

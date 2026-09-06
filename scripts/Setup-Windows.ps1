@@ -11,7 +11,7 @@ if ($env:PROCESSOR_ARCHITECTURE -ne 'AMD64' -and $env:PROCESSOR_ARCHITEW6432 -ne
 }
 
 $manifest = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'manifest.json') -Raw | ConvertFrom-Json
-foreach ($file in @('app.tar.gz', 'install-wsl.sh', 'launch-wsl.sh')) {
+foreach ($file in @('app.tar.gz', 'install-wsl.sh', 'launch-wsl.sh', 'icon.ico')) {
     $actual = (Get-FileHash -LiteralPath (Join-Path $PSScriptRoot $file) -Algorithm SHA256).Hash.ToLowerInvariant()
     if ($actual -ne $manifest.sha256.$file) { throw "Checksum mismatch for $file. Extract a fresh setup archive." }
 }
@@ -40,11 +40,17 @@ if ($LASTEXITCODE -ne 0 -or !$linuxPath.StartsWith('/')) { throw 'Could not find
 & $wsl --distribution $Distribution --exec bash "$linuxPath/install-wsl.sh" "$linuxPath"
 if ($LASTEXITCODE -ne 0) { throw 'Abra installation failed inside Ubuntu. See the error above; rerun setup after fixing it.' }
 
+$iconDirectory = Join-Path $env:LOCALAPPDATA 'Abra Teleport'
+New-Item -ItemType Directory -Force -Path $iconDirectory | Out-Null
+$iconPath = Join-Path $iconDirectory 'icon.ico'
+Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'icon.ico') -Destination $iconPath -Force
+
 $shortcutPath = Join-Path ([Environment]::GetFolderPath('Desktop')) 'Abra Teleport.lnk'
 $shell = New-Object -ComObject WScript.Shell
 $shortcut = $shell.CreateShortcut($shortcutPath)
 $shortcut.TargetPath = $wsl
 $shortcut.Arguments = "--distribution $Distribution --exec /opt/abra-teleport/launch-wsl.sh"
+$shortcut.IconLocation = $iconPath
 $shortcut.Description = 'Abra Teleport (WSL)'
 $shortcut.Save()
 Write-Host 'Abra Teleport is installed. Use the desktop shortcut to open it. Sign in to sites inside the Abra browser.'

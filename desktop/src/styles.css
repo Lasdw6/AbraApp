@@ -50,7 +50,8 @@ input[type="checkbox"] { margin: 0; accent-color: var(--accent); }
 .app { height: 100vh; display: flex; flex-direction: column; }
 .bar { flex: 0 0 44px; display: flex; align-items: center; justify-content: space-between; padding: 0 16px; border-bottom: 1px solid var(--line); -webkit-app-region: drag; }
 .mac .bar { padding-left: 84px; }
-.bar-title { font-weight: 600; }
+.bar-title { display: flex; align-items: center; gap: 7px; font-weight: 600; }
+.brand-icon { width: 26px; height: 26px; }
 .content { flex: 1; min-height: 0; overflow: auto; width: 100%; max-width: 1080px; margin: 0 auto; padding: 4px 20px 32px; }
 .content.narrow { max-width: 560px; padding-top: 28px; display: flex; flex-direction: column; gap: 12px; }
 section { padding: 14px 0; border-bottom: 1px solid var(--line); }

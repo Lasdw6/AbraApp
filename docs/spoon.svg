@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="tile" x2="1" y2="1">
+      <stop stop-color="#343946"/>
+      <stop offset="1" stop-color="#171a22"/>
+    </linearGradient>
+    <linearGradient id="silver" x2="1" y2="0.35">
+      <stop stop-color="#a6b4c6"/>
+      <stop offset="0.42" stop-color="#fff"/>
+      <stop offset="1" stop-color="#bcc9d9"/>
+    </linearGradient>
+    <linearGradient id="bowl" x2="0.8" y2="1">
+      <stop stop-color="#6e8098"/>
+      <stop offset="0.55" stop-color="#c5d2e1"/>
+      <stop offset="1" stop-color="#f1f6fc"/>
+    </linearGradient>
+  </defs>
+  <rect x="64" y="64" width="896" height="896" rx="208" fill="url(#tile)"/>
+  <g transform="rotate(40 512 512)">
+    <path d="M512 172c-78 0-130 78-130 168 0 80 40 139 92 158 12 5 18 15 17 32l-20 267c-2 30 15 49 41 49s43-19 41-49l-20-267c-1-17 5-27 17-32 52-19 92-78 92-158 0-90-52-168-130-168Z" fill="url(#silver)"/>
+    <ellipse cx="512" cy="332" rx="96" ry="130" fill="url(#bowl)"/>
+    <path d="M453 252c-21 25-30 60-28 90" fill="none" stroke="#fff" stroke-opacity=".7" stroke-width="9" stroke-linecap="round"/>
+  </g>
+</svg>

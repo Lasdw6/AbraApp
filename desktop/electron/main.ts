@@ -95,6 +95,7 @@ function createWindow() {
     minWidth: 640,
     minHeight: 420,
     title: 'Abra Teleport',
+    icon: path.join(__dirname, '../..', 'dist-web', 'icon.png'),
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
     backgroundColor: nativeTheme.shouldUseDarkColors ? '#171717' : '#ffffff',
     webPreferences: {
@@ -110,6 +111,7 @@ function createWindow() {
 
 app.whenReady().then(() => {
   app.setName('Abra Teleport');
+  if (process.platform === 'darwin' && !app.isPackaged) app.dock?.setIcon(path.join(__dirname, '../..', 'dist-web', 'icon.png'));
   if (process.platform === 'win32') app.setAppUserModelId('dev.abra.teleport');
   createWindow();
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });

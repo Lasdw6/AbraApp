@@ -103,7 +103,11 @@
       "hardenedRuntime": false,
       "extendInfo": {
         "NSAppleEventsUsageDescription": "Abra Teleport reads the titles and URLs of your open Chrome tabs so you can choose what to move."
-      }
+      },
+      "icon": "assets/icon.icns"
+    },
+    "win": {
+      "icon": "assets/icon.ico"
     }
   }
 }

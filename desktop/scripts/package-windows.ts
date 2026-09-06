@@ -40,7 +40,7 @@ async function main() {
   const config = path.join(output, 'builder.json');
   await fs.writeFile(config, JSON.stringify({ ...pkg.build, extraResources,
     directories: { output },
-    win: { target: 'nsis', executableName: 'Abra Teleport', signExecutable: false },
+    win: { ...pkg.build.win, target: 'nsis', executableName: 'Abra Teleport', signExecutable: false },
     nsis: { oneClick: false, perMachine: false, allowToChangeInstallationDirectory: true,
       artifactName: 'Abra-Teleport-Windows-${version}-${arch}-Setup.${ext}' },
   }));

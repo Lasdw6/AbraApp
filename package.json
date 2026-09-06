@@ -13,7 +13,8 @@
     "test:build-safety": "tsx --test scripts/test/*.test.ts",
     "test:pairing": "tsx --test services/pairing/*.test.ts",
     "build:pairing": "esbuild services/pairing/index.ts --bundle --platform=node --target=node22 --format=cjs --outfile=services/pairing/dist/index.js",
-    "deploy:pairing": "tsx scripts/deploy-pairing.ts"
+    "deploy:pairing": "tsx scripts/deploy-pairing.ts",
+    "icons": "tsx scripts/generate-icons.ts"
   },
   "type": "module",
   "workspaces": [
@@ -22,6 +23,7 @@
   ],
   "devDependencies": {
     "@aws-sdk/client-dynamodb": "^3.1127.0",
+    "@resvg/resvg-js": "^2.6.2",
     "@types/node": "^22.0.0",
     "esbuild": "^0.28.2",
     "tsx": "^4.20.0",

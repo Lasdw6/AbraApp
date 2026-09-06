@@ -356,7 +356,7 @@ export default function App() {
 
   return <div className="app">
     <header className="bar">
-      <span className="bar-title">Abra Teleport</span>
+      <span className="bar-title"><img className="brand-icon" src="./spoon.svg" alt="" />Abra Teleport</span>
       <AgentMenu agent={endpoint?.provider || null} health={health} checking={checking} refresh={() => void refresh()} onConnected={refresh} />
     </header>
     {error && <p className="notice error banner" role="alert">{error}<button className="link" onClick={() => setError('')}>Dismiss</button></p>}

@@ -14,6 +14,8 @@ The header checks connection health every 15 seconds and shows the last successf
 
 Source lives in `src/`, `electron/`, and `shared/` as TypeScript. The preload and renderer share one typed IPC contract. Install dependencies with `npm ci` from the repository root.
 
+The spoon logo source is `assets/spoon.svg`. After editing it, run `npm run icons` from the repository root to regenerate the app and website assets, including Mac and Windows icons. Commit the generated assets with the source.
+
 ```sh
 npm run typecheck
 npm run desktop:build
