@@ -2,13 +2,14 @@
 # Release packaging fills in the archive URL and digest.
 set -euo pipefail
 TICKET="${1:-}"
-[[ "$TICKET" == abra-pair/1/* || "$TICKET" =~ ^ABRA-[A-Za-z0-9_-]{22}$ ]] || { echo 'Run the connection command from the app.' >&2; exit 1; }
+[[ "$TICKET" == abra-pair/1/* || "$TICKET" =~ ^ABRA-([A-Z2-7]{8}|[A-Za-z0-9_-]{22})$ ]] || { echo 'Run the connection command from the app.' >&2; exit 1; }
 CLI="$(command -v abra-teleport || true)"
 if [[ -z "$CLI" && -x "${ABRA_TELEPORT_BIN_DIR:-$HOME/.local/bin}/abra-teleport" ]]; then
   CLI="${ABRA_TELEPORT_BIN_DIR:-$HOME/.local/bin}/abra-teleport"
 fi
 REQUIRED_HELP='agent connect'
 [[ "$TICKET" == ABRA-* ]] && REQUIRED_HELP='ticket-or-code'
+[[ "$TICKET" =~ ^ABRA-[A-Z2-7]{8}$ ]] && REQUIRED_HELP='8-character pairing codes'
 if [[ -z "$CLI" ]] || ! "$CLI" --help | grep -q "$REQUIRED_HELP"; then
   ARCHIVE_URL='@ARCHIVE_URL@'
   EXPECTED='@ARCHIVE_SHA256@'

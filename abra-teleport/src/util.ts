@@ -48,7 +48,7 @@ export function sha256(bytes) {
 
 export function redact(text) {
   return String(text)
-    .replace(/ABRA-[A-Za-z0-9_-]{22}/g, '[redacted-pair-code]')
+    .replace(/ABRA-(?:[A-Za-z0-9_-]{22}|[A-Z2-7]{8})/g, '[redacted-pair-code]')
     .replace(/abra-pair\/1\/[A-Za-z0-9_-]+/g, '[redacted-pair-ticket]')
     .replace(/\bsk-(?:proj-)?[A-Za-z0-9_-]{20,}\b/g, '[redacted-openai-key]')
     .replace(/\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,})\b/g, '[redacted-github-token]')

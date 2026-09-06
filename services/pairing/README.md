@@ -1,12 +1,14 @@
 # Short pairing codes
 
-The desktop creates a signed Abra ticket and replaces it with a 27-character code in the connection command. The installer installs or upgrades the agent CLI if necessary, then the CLI redeems the code and verifies the original ticket through Abra. Existing installations pair without downloading the archive again.
+The desktop creates a signed Abra ticket and replaces it with a code such as `ABRA-K7M2Q4XT` (eight random characters plus the prefix) in the connection command. The installer installs or upgrades the agent CLI if necessary, then the CLI redeems the code and verifies the original ticket through Abra. Existing installations pair without downloading the archive again.
 
-Codes contain 128 random bits. The client derives separate lookup and AES-256-GCM encryption keys from the code. Only the lookup hash, ciphertext, and expiry reach this service; the code and plaintext ticket stay with the two devices. Browser sessions never pass through this service.
+New codes contain 40 random bits and act as temporary lookup credentials. The trusted pairing service holds the signed ticket over HTTPS in a DynamoDB table encrypted at rest; it can read that ticket. The code itself is not stored. Short codes rely on server access controls, request limits, expiry, and single-use redemption, rather than serving as encryption keys. Browser sessions never pass through this service.
+
+Older 22-character codes remain supported: their 128 random bits derive separate lookup and AES-256-GCM keys, so those tickets remain encrypted from the service.
 
 Tickets expire after at most ten minutes. Redemption atomically deletes the record, so only one request succeeds. Expired records cannot be redeemed even while DynamoDB's asynchronous TTL cleanup is pending. A lost redemption response consumes the code; generate a new command to retry.
 
-The service accepts HTTPS POST requests at `/v1/tickets` and `/v1/redeem`. Neither codes nor tickets appear in request URLs. It limits requests to 30 per source IP per minute and 600 total per minute, and accepts at most 16,000 characters of ciphertext. It stores only hashes of IPs for rate counting and expires those counters. The function has no logging permissions and its IAM role can only put, update, or delete records in its own table.
+The service accepts HTTPS POST requests at `/v2/tickets` and `/v2/redeem` (and the legacy `/v1` routes). Neither codes nor tickets appear in request URLs. It limits requests to 30 per source IP per minute and 600 total per minute, and accepts at most 16,000 characters of ciphertext. It stores only hashes of IPs for rate counting and expires those counters. The function has no logging permissions and its IAM role can only put, update, or delete records in its own table.
 
 ## Development and deployment
 

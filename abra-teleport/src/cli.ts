@@ -12,7 +12,7 @@ const HELP = `abra-teleport
 Move browser sessions and monitor paired agent sandboxes.
 
 Setup and pairing
-  abra-teleport agent connect <ticket-or-code> [name]
+  abra-teleport agent connect <ticket-or-code> [name]  (8-character pairing codes)
   abra-teleport agent ticket [--full]
   abra-teleport agent list
   abra-teleport setup

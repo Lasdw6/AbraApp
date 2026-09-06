@@ -12,14 +12,14 @@ const store: Store = {
   },
   async put(ticket) {
     try {
-      await client.send(new PutItemCommand({ TableName, Item: { id: { S: ticket.id }, ciphertext: { S: ticket.ciphertext }, expiresAt: { N: String(ticket.expiresAt) } }, ConditionExpression: 'attribute_not_exists(id)' }));
+      await client.send(new PutItemCommand({ TableName, Item: { id: { S: ticket.id }, ...(ticket.ticket ? { ticket: { S: ticket.ticket } } : { ciphertext: { S: ticket.ciphertext! } }), expiresAt: { N: String(ticket.expiresAt) } }, ConditionExpression: 'attribute_not_exists(id)' }));
       return true;
     } catch (error) { if (conditionalFailure(error)) return false; throw error; }
   },
-  async take(id, now) {
+  async take(id, now, field) {
     try {
-      const result = await client.send(new DeleteItemCommand({ TableName, Key: { id: { S: id } }, ConditionExpression: 'expiresAt > :now AND attribute_exists(ciphertext)', ExpressionAttributeValues: { ':now': { N: String(now) } }, ReturnValues: 'ALL_OLD' }));
-      return { id, ciphertext: result.Attributes!.ciphertext.S!, expiresAt: Number(result.Attributes!.expiresAt.N) };
+      const result = await client.send(new DeleteItemCommand({ TableName, Key: { id: { S: id } }, ConditionExpression: 'expiresAt > :now AND attribute_exists(#payload)', ExpressionAttributeNames: { '#payload': field }, ExpressionAttributeValues: { ':now': { N: String(now) } }, ReturnValues: 'ALL_OLD' }));
+      return { id, [field]: result.Attributes![field].S!, expiresAt: Number(result.Attributes!.expiresAt.N) };
     } catch (error) { if (conditionalFailure(error)) return null; throw error; }
   },
 };

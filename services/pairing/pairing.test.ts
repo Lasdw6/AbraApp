@@ -10,7 +10,7 @@ function fixture() {
   const store: Store = {
     async limit() { return !limited; },
     async put(value) { if (entries.has(value.id)) return false; entries.set(value.id, value); return true; },
-    async take(id, now) { const value = entries.get(id); if (!value || value.expiresAt <= now) return null; entries.delete(id); return value; },
+    async take(id, now, field) { const value = entries.get(id); if (!value || !value[field] || value.expiresAt <= now) return null; entries.delete(id); return value; },
   };
   const handler = createHandler(store);
   const requests: string[] = [];
@@ -33,16 +33,18 @@ test('encrypted tickets round trip and reject changed codes, ciphertext, and exp
   assert.throws(() => openPairingTicket(sealed.code, sealed.ciphertext, now + 600), /expired/);
 });
 
-test('service never receives the code or plaintext ticket and allows only one redemption', async () => {
+test('short codes use a trusted exchange and allow only one redemption', async () => {
   const f = fixture(), original = ticket(Math.floor(Date.now() / 1000));
   const code = await publishPairingTicket(original, { fetcher: f.fetcher, serviceUrl: 'https://pairing.example/' });
-  assert.ok(f.entries.has(pairingCodeId(code)));
+  assert.match(code, /^ABRA-[A-Z2-7]{8}$/);
+  assert.equal(f.entries.get(pairingCodeId(code))?.ticket, original);
+  await assert.rejects(resolvePairingCode(code === 'ABRA-AAAAAAAA' ? 'ABRA-BBBBBBBB' : 'ABRA-AAAAAAAA', { fetcher: f.fetcher }), /expired/);
   const result = await Promise.allSettled([resolvePairingCode(code, { fetcher: f.fetcher, serviceUrl: 'https://pairing.example/' }), resolvePairingCode(code, { fetcher: f.fetcher, serviceUrl: 'https://pairing.example/' })]);
   assert.equal(result.filter(value => value.status === 'fulfilled').length, 1);
   const success = result.find(value => value.status === 'fulfilled');
   assert.equal(success?.value, original);
   assert.equal(f.entries.size, 0);
-  assert.ok(f.requests.every(body => !body.includes(code) && !body.includes(original)));
+  assert.ok(f.requests.every(body => !body.includes(code)));
 });
 
 test('service rejects invalid expiry, duplicate writes, rate limits, and stale tickets', async () => {
@@ -59,4 +61,22 @@ test('service rejects invalid expiry, duplicate writes, rate limits, and stale t
 
 test('client rejects non-HTTPS services before publishing credentials', async () => {
   await assert.rejects(publishPairingTicket(ticket(Math.floor(Date.now() / 1000)), { serviceUrl: 'http://example.com' }), /HTTPS/);
+});
+
+test('legacy encrypted codes still redeem without disclosing the ticket to the service', async () => {
+  const f = fixture(), original = ticket(Math.floor(Date.now() / 1000));
+  const { code, ...sealed } = sealPairingTicket(original);
+  f.entries.set(sealed.id, sealed);
+  assert.equal(await resolvePairingCode(code, { fetcher: f.fetcher }), original);
+  assert.ok(f.requests.every(body => !body.includes(code) && !body.includes(original)));
+});
+
+test('short code publication retries a collision and rejects inconsistent expiry', async () => {
+  const f = fixture(), original = ticket(Math.floor(Date.now() / 1000));
+  let attempts = 0;
+  const fetcher = (async (...args: Parameters<typeof fetch>) => ++attempts === 1 ? new Response('{}', { status: 409 }) : f.fetcher(...args)) as typeof fetch;
+  await publishPairingTicket(original, { fetcher });
+  assert.equal(attempts, 2);
+  const response = await f.handler({ rawPath: '/v2/tickets', body: JSON.stringify({ id: 'a'.repeat(64), ticket: original, expiresAt: Math.floor(Date.now() / 1000) + 60 }), requestContext: { http: { method: 'POST', sourceIp: '127.0.0.1' } } });
+  assert.equal(response.statusCode, 400);
 });
