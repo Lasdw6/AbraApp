@@ -1,16 +1,14 @@
-import { closeSync, openSync } from 'node:fs';
-import { chmod, mkdir, stat } from 'node:fs/promises';
+import { chmod, mkdir, open, stat } from 'node:fs/promises';
 import path from 'node:path';
-import { spawn } from 'node:child_process';
 import { appRoot, browserAdapterCandidates, paths } from './paths.js';
-import { executableOnPath, exists, isProcessAlive, processIdentity, readJson, runJson, secureDir, sleep, writeJson } from './util.js';
+import { executableOnPath, exists, readJson, runJson, secureDir, writeJson } from './util.js';
 
 import type { RunOptions } from './types.js';
 
-let resolvedBinary: string | undefined;
+let resolvedBinary: { override?: string; path: string } | undefined;
 
 export async function abraBinary() {
-  if (resolvedBinary) return resolvedBinary;
+  if (resolvedBinary && resolvedBinary.override === process.env.ABRA_BIN) return resolvedBinary.path;
   const name = process.platform === 'win32' ? 'abra.exe' : 'abra';
   const candidates = [
     process.env.ABRA_BIN,
@@ -22,13 +20,16 @@ export async function abraBinary() {
     await executableOnPath('abra')
   ].filter((value): value is string => typeof value === 'string' && value.length > 0);
   for (const candidate of candidates) {
-    if (await exists(candidate)) return (resolvedBinary = candidate);
+    if (await exists(candidate)) {
+      resolvedBinary = { override: process.env.ABRA_BIN, path: candidate };
+      return candidate;
+    }
   }
   throw new Error('Abra was not found. Set ABRA_BIN or build ../abra/target/release/abra');
 }
 
 function daemonEnv() {
-  return { ABRA_BROWSER_DATA_DIR: paths().browserData, ABRA_NODE_BIN: process.execPath };
+  return { ABRA_BROWSER_DATA_DIR: paths().browserData, ABRA_NODE_BIN: process.env.ABRA_NODE_BIN || process.execPath };
 }
 
 export async function abra<T = any>(args: string[], options: RunOptions = {}): Promise<T> {
@@ -48,12 +49,6 @@ export async function browserAdapterDirectory() {
   throw new Error('browser-session adapter was not found. Set ABRA_BROWSER_ADAPTER to the Abra adapter directory');
 }
 
-async function addAdapter(name, directory) {
-  const listed = await abra(['adapters', 'list']);
-  const current = listed.adapters?.find(item => item.manifest?.name === name);
-  if (!current) await abra(['adapters', 'add', directory]);
-}
-
 export async function ensureAdapters() {
   // Older app versions registered this adapter by path. Remove the stale entry
   // even when the upgraded app no longer contains its manifest.
@@ -61,9 +56,23 @@ export async function ensureAdapters() {
   const registered = await readJson<string[]>(registryFile, []);
   const current = registered.filter(directory => path.basename(directory) !== 'codex-session');
   if (current.length !== registered.length) await writeJson(registryFile, current);
-  await addAdapter('dev.abra.teleport-agent', path.join(appRoot, 'adapters', 'teleport-agent'));
-  await addAdapter('dev.abra.browser-session', await browserAdapterDirectory());
-  const listed = await abra(['adapters', 'list']);
+  let listed = await abra(['adapters', 'list']);
+  let added = false;
+  for (const [name, directory] of [
+    ['dev.abra.teleport-agent', path.join(appRoot, 'adapters', 'teleport-agent')],
+    ['dev.abra.browser-session', await browserAdapterDirectory()]
+  ]) {
+    if (!listed.adapters?.some(item => item.manifest?.name === name)) {
+      try { await abra(['adapters', 'add', directory]); }
+      catch (error) {
+        const refreshed = await abra(['adapters', 'list']);
+        if (!String(error.message).includes(`duplicate adapter name ${name}`) ||
+            !refreshed.adapters?.some(item => item.manifest?.name === name && path.resolve(item.directory) === path.resolve(directory))) throw error;
+      }
+      added = true;
+    }
+  }
+  if (added) listed = await abra(['adapters', 'list']);
   if (listed.errors?.length) throw new Error(`Abra adapter discovery failed: ${listed.errors.join('; ')}`);
   return listed;
 }
@@ -81,65 +90,46 @@ export async function ensureDaemon() {
     // Replacing the app does not replace its already-running daemon. Older
     // records have no stamp and need one restart before using new adapters.
     if (state && state.root === paths().abraRoot && (state.binary !== binary || state.binary_stamp !== binaryStamp)) {
-      const stopped = await stopDaemon();
-      if (!stopped.stopped || await daemonStatus()) throw new Error('Abra could not restart its outdated daemon.');
+      await stopDaemon();
+      if (await daemonStatus()) throw new Error('Abra could not restart its outdated daemon.');
     } else {
       await ensureAdapters();
       return { ...running, started: false };
     }
   }
 
-  const log = openSync(paths().daemonLog, 'a', 0o600);
+  const args = ['daemon', '--background', '--yes'];
   const transport = process.env.ABRA_TELEPORT_TRANSPORT;
-  const args = ['--root', paths().abraRoot, 'daemon', '--yes'];
   if (transport) args.push('--transport', transport);
-  const child = spawn(binary, args, {
-    detached: true,
-    windowsHide: true,
-    stdio: ['ignore', log, log],
-    env: { ...process.env, ...daemonEnv() }
-  });
-  child.unref();
-  closeSync(log);
-  const identity = await processIdentity(child.pid);
-  if (!identity) throw new Error('Abra daemon exited before startup.');
-  await writeJson(paths().daemonState, { pid: child.pid, binary, binary_stamp: binaryStamp, root: paths().abraRoot, started_at: identity.started_at });
-  for (let attempt = 0; attempt < 200; attempt++) {
-    const status = await daemonStatus();
-    if (status) {
-      await ensureAdapters();
-      return { ...status, started: true };
-    }
-    if (!await isProcessAlive(child.pid)) break;
-    await sleep(50);
+  try {
+    await abra(args, { timeout: 65000 });
+  } catch (error) {
+    // Another caller may have started the same daemon under Abra's launch lock.
+    if (!String(error.message).includes('daemon already running') || !await daemonStatus()) throw error;
   }
-  throw new Error(`Abra daemon did not start. See ${paths().daemonLog}`);
+  const record = await readJson(path.join(paths().abraRoot, 'daemon.pid'));
+  await writeJson(paths().daemonState, { ...record, binary_stamp: binaryStamp });
+  await ensureAdapters();
+  return { ...await daemonStatus(), started: true };
 }
 
 export async function stopDaemon() {
-  const state = await readJson(paths().daemonState, null);
-  if (!state || !await isProcessAlive(state.pid)) return { stopped: false };
-  const identity = await processIdentity(state.pid);
-  if (!identity || state.root !== paths().abraRoot || !state.started_at || identity.started_at !== state.started_at || !identity.command.includes(state.binary) || !identity.command.includes(paths().abraRoot) || !identity.command.includes('daemon')) {
-    throw new Error(`refusing to stop PID ${state.pid}; it is not the recorded Abra daemon`);
-  }
-  process.kill(state.pid, 'SIGTERM');
-  for (let attempt = 0; attempt < 100 && await isProcessAlive(state.pid); attempt++) await sleep(50);
-  return { stopped: !await isProcessAlive(state.pid) };
-}
-
-export async function waitForAck(snapshotId, timeoutMs = 120000) {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    const outbox = await abra(['outbox']);
-    const entry = outbox.find(item => item.snapshot_id === snapshotId);
-    if (entry?.state === 'acked') return entry;
-    if (['failed', 'cancelled', 'expired'].includes(entry?.state)) {
-      throw new Error(`Abra delivery ${snapshotId} ended as ${entry.state}: ${entry.last_error || 'no detail'}`);
+  const pidFile = path.join(paths().abraRoot, 'daemon.pid');
+  if (!await exists(pidFile)) {
+    const legacy = await readJson(paths().daemonState, null);
+    if (!legacy) return { stopped: false };
+    if (legacy.root !== paths().abraRoot || !legacy.started_at || !legacy.binary || !Number.isSafeInteger(legacy.pid) || legacy.pid <= 0) {
+      throw new Error('Cannot migrate the recorded Abra daemon: invalid process identity.');
     }
-    await sleep(250);
+    // Old Teleport releases launched a foreground daemon. Hand its identity to
+    // Abra, which verifies the live process before sending any signal.
+    await secureDir(paths().abraRoot);
+    try {
+      const file = await open(pidFile, 'wx', 0o600);
+      try { await file.writeFile(JSON.stringify(legacy)); } finally { await file.close(); }
+    } catch (error) { if (error.code !== 'EEXIST') throw error; }
   }
-  throw new Error(`Abra delivery ${snapshotId} was not acknowledged within ${timeoutMs}ms`);
+  return abra(['stop'], { timeout: 15000 });
 }
 
 export async function ensurePrivateMaterialization(id) {

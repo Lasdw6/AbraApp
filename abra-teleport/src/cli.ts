@@ -48,9 +48,12 @@ Connection status
   abra-teleport agent health < request.json
 `;
 
-function output(value) {
-  process.stdout.write(`${JSON.stringify(value, null, 2)}\n`);
-}
+let commandOutput: ((value: string) => void) | undefined;
+let commandInput: string | undefined;
+let executeQueue: Promise<unknown> = Promise.resolve();
+
+function write(value: string) { commandOutput ? commandOutput(value) : process.stdout.write(value); }
+function output(value) { write(`${JSON.stringify(value, null, 2)}\n`); }
 
 function need(value, message) {
   if (!value) throw new Error(message);
@@ -82,25 +85,43 @@ export async function main(argv) {
   return dispatch(argv);
 }
 
+// Used by the desktop worker. Each worker executes one command at a time, so CLI
+// input and output stay isolated without changing process-wide streams.
+export async function execute(argv: string[], input = ''): Promise<string> {
+  const operation = executeQueue.then(async () => {
+    let result = '';
+    commandInput = input;
+    commandOutput = value => {
+      result += value;
+      if (result.length > 32 * 1024 * 1024) throw new Error('Teleport response is too large.');
+    };
+    try { await main(argv); return result; }
+    finally { commandInput = undefined; commandOutput = undefined; }
+  });
+  executeQueue = operation.catch(() => {});
+  return operation;
+}
+
 async function dispatch(argv) {
   if (argv[0] === 'agent') {
     const { connectAgent, agentTicket, listAgents, agentRemote } = await import('./agent.js');
     if (argv[1] === 'connect') return output(await connectAgent(argv[2], argv[3]));
     if (argv[1] === 'ticket') return output(await agentTicket({ shortCode: !argv.includes('--full') }));
     if (argv[1] === 'health') {
-      let input = '';
-      for await (const chunk of process.stdin) {
+      let input = commandInput ?? '';
+      if (commandInput === undefined) for await (const chunk of process.stdin) {
         input += chunk;
         if (input.length > 16384) throw new Error('Connection request is too large.');
       }
+      if (input.length > 16384) throw new Error('Connection request is too large.');
       return output(await (await import('./connection-health.js')).checkConnection(JSON.parse(input).config));
     }
     if (argv[1] === 'list') return output(await listAgents());
     if (argv[1] === 'remote') {
-      let input = '';
-      for await (const chunk of process.stdin) input += chunk;
+      let input = commandInput ?? '';
+      if (commandInput === undefined) for await (const chunk of process.stdin) input += chunk;
       const request = JSON.parse(input);
-      process.stdout.write(await agentRemote(request.config, request.argv)); return;
+      write(await agentRemote(request.config, request.argv)); return;
     }
     throw new Error('agent needs connect, ticket, list, or remote');
   }
@@ -110,11 +131,12 @@ async function dispatch(argv) {
   }
   if (argv[0] === 'sandbox') {
     const { sandboxCommand } = await import('./sandbox.js');
-    let input = '';
-    for await (const chunk of process.stdin) {
+    let input = commandInput ?? '';
+    if (commandInput === undefined) for await (const chunk of process.stdin) {
       input += chunk;
       if (input.length > 1024 * 1024) throw new Error('Sandbox request is too large.');
     }
+    if (input.length > 1024 * 1024) throw new Error('Sandbox request is too large.');
     const request = JSON.parse(input);
     return output(await sandboxCommand(argv[1], request.config, request.payload));
   }
@@ -126,7 +148,7 @@ async function dispatch(argv) {
   const { positionals, flags } = parseArgs(argv);
   const [group, action, ...rest] = positionals;
   if (!group || group === 'help' || flags.help === true) {
-    process.stdout.write(HELP);
+    write(HELP);
     return;
   }
 

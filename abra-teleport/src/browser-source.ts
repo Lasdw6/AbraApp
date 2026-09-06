@@ -29,15 +29,14 @@ const profileStateEntries = [
 
 async function browserModules() {
   const adapter = await browserAdapterDirectory();
-  const browser = await import(pathToFileURL(path.join(adapter, 'lib', 'browser.js')).href);
+  const browser = await import(pathToFileURL(path.join(adapter, 'lib', 'index.js')).href);
   const cdp = await import(pathToFileURL(path.join(adapter, 'lib', 'cdp.js')).href);
-  const util = await import(pathToFileURL(path.join(adapter, 'lib', 'util.js')).href);
-  return { ...browser, ...cdp, ...util };
+  return { ...browser, ...cdp };
 }
 
 async function browserUtil() {
   const adapter = await browserAdapterDirectory();
-  return import(pathToFileURL(path.join(adapter, 'lib', 'util.js')).href);
+  return import(pathToFileURL(path.join(adapter, 'lib', 'index.js')).href);
 }
 
 async function rejectProfileSymlinks(root) {
@@ -278,13 +277,15 @@ async function captureProfileTab(profile, url) {
   if (!available.some(item => item.directory === profile && item.directory !== 'active')) {
     throw new Error('select the Chrome profile that owns this tab');
   }
-  const { capture, CDP, attachPage, waitForLoad } = await browserModules();
+  const { captureTarget, CDP, attachPage, waitForLoad } = await browserModules();
   const captured = await withHeadlessProfile(profile, async wsUrl => {
     const cdp = await new CDP(wsUrl).connect();
+    let selectedTargetId;
     try {
       const existing = (await cdp.send('Target.getTargets')).targetInfos.filter(item => item.type === 'page');
       for (const target of existing) await cdp.send('Target.closeTarget', { targetId: target.targetId }).catch(() => {});
       const target = await cdp.send('Target.createTarget', { url: 'about:blank', background: false });
+      selectedTargetId = target.targetId;
       const session = await attachPage(cdp, target.targetId);
       try {
         await cdp.send('Page.navigate', { url: selectedURL.href }, session);
@@ -293,13 +294,9 @@ async function captureProfileTab(profile, url) {
       finally { await cdp.send('Target.detachFromTarget', { sessionId: session }).catch(() => {}); }
     }
     finally { cdp.close(); }
-    return capture(wsUrl);
+    return captureTarget(wsUrl, selectedTargetId, selectedURL.href);
   });
-  const cookies = (captured.cookies || []).filter(cookie => cookieAppliesTo(cookie, selectedURL));
-  const origins = (captured.origins || []).filter(item => {
-    try { return new URL(item.origin).origin === selectedURL.origin; } catch { return false; }
-  });
-  return { selectedURL, state: { ...captured, cookies, origins, tabs: [] } };
+  return { selectedURL, state: { ...captured, tabs: [] } };
 }
 
 export async function browserTabInventory(profile, url, title = '') {
@@ -384,12 +381,9 @@ export async function selectedBrowserState(profile, url, title, selectedCookieKe
   let selectedURL = requestedURL;
   let state;
   if (profile === 'active') {
-    state = await captureManagedTab(tabId, url, { includeStorage: includeStorage && !protectedGoogleState, wsUrl: sourceCdp });
+    state = await captureManagedTab(tabId, url, { includeStorage: includeStorage && !protectedGoogleState, wsUrl: sourceCdp,
+      selectedCookieKeys: selectedCookieKeys === null ? undefined : selectedCookieKeys });
     state.cookies = protectedGoogleState ? [] : state.cookies.filter(cookie => cookieAppliesTo(cookie, requestedURL));
-    if (selectedCookieKeys !== null) {
-      const allowed = new Set(selectedCookieKeys || []);
-      state.cookies = state.cookies.filter(cookie => allowed.has(cookieKey(cookie)));
-    }
     if (protectedGoogleState) state.origins = [];
     return state;
   }

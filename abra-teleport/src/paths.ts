@@ -17,7 +17,6 @@ export function paths() {
     chromeProfile: path.join(home, 'chrome-profile'),
     chromeState: path.join(home, 'chrome.json'),
     daemonState: path.join(home, 'daemon.json'),
-    daemonLog: path.join(home, 'daemon.log'),
     state: path.join(home, 'state.json'),
     received: path.join(home, 'received')
   };

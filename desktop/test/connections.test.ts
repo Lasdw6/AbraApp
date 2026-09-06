@@ -1,9 +1,11 @@
 import assert from 'node:assert/strict';
+import { spawn } from 'node:child_process';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { createConnections } from '../electron/connections';
+import type { TeleportService } from '../electron/teleport';
 
 async function fixture(fail = false) {
   const home = await mkdtemp(path.join(os.tmpdir(), 'abra-desktop-startup-'));
@@ -31,8 +33,23 @@ if (args[0] === 'setup') {
  } else console.log('{}');
 }
 `);
-  const connections = createConnections({ home, runtime: () => ({ node: process.execPath, wrapper: home, abra: '/unused', adapter: '/unused', observer: '/unused' }) });
-  return { home, connections, calls: async () => (await readFile(path.join(home, 'calls'), 'utf8')).trim().split('\n') };
+  const teleport: TeleportService = {
+    raw: async () => '', close: async () => {},
+    run: <T>(args: string[], request?: unknown, timeout = 540000) => new Promise<T>((resolve, reject) => {
+      const child = spawn(process.execPath, [path.join(home, 'bin/abra-teleport.js'), ...args], { timeout, stdio: ['pipe', 'pipe', 'pipe'] });
+      let stdout = '', stderr = '';
+      child.stdout.on('data', chunk => { stdout += chunk; });
+      child.stderr.on('data', chunk => { stderr += chunk; });
+      child.once('error', reject);
+      child.once('close', code => {
+        if (code !== 0) return reject(new Error(stderr.trim() || `Agent command exited ${code}.`));
+        try { resolve(JSON.parse(stdout)); } catch { reject(new Error('Teleport returned an unreadable response.')); }
+      });
+      child.stdin.end(request === undefined ? '' : JSON.stringify(request));
+    }),
+  };
+  const connections = createConnections({ home, teleport });
+  return { home, connections, teleport, calls: async () => (await readFile(path.join(home, 'calls'), 'utf8')).trim().split('\n') };
 }
 
 test('concurrent startup requests share one completed daemon setup', async () => {
@@ -92,7 +109,7 @@ test('agent names persist across restarts, discovery, selection, and handoffs', 
     await Promise.all([f.connections.rename('first', '  Research  '), f.connections.rename('second', 'Writing')]);
     assert.deepEqual(await f.connections.config(), { ...before, name: 'Research' });
     assert.deepEqual((await f.connections.list()).map(agent => agent.name), ['Research', 'Writing']);
-    const restarted = createConnections({ home: f.home, runtime: () => ({ node: process.execPath, wrapper: f.home, abra: '/unused', adapter: '/unused', observer: '/unused', asNode: false }) });
+    const restarted = createConnections({ home: f.home, teleport: f.teleport });
     assert.equal((await restarted.config())?.name, 'Research');
     assert.equal((await restarted.select('second')).name, 'Writing');
     assert.equal((await restarted.command('browser-up', {}, 'first')).config.name, 'Research');

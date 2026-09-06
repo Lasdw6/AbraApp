@@ -1,8 +1,8 @@
 import { app, BrowserWindow, dialog, ipcMain, nativeTheme } from 'electron';
-import { spawn } from 'node:child_process';
 import { copyFile } from 'node:fs/promises';
 import * as path from 'node:path';
 import { createConnections } from './connections.js';
+import { createTeleport } from './teleport.js';
 
 function runtime() {
   if (app.isPackaged) {
@@ -26,7 +26,8 @@ function runtime() {
   };
 }
 
-const connections = createConnections({ home: app.getPath('home'), runtime });
+const teleport = createTeleport(runtime());
+const connections = createConnections({ home: app.getPath('home'), teleport });
 ipcMain.handle('abra:provider-config', () => connections.config());
 ipcMain.handle('abra:agent-ticket', () => connections.ticket());
 ipcMain.handle('abra:export-installer', async () => {
@@ -43,48 +44,8 @@ ipcMain.handle('abra:agent-select', (_event, id) => connections.select(id));
 ipcMain.handle('abra:agent-rename', (_event, id, name) => connections.rename(id, name));
 ipcMain.handle('abra:sandbox', (_event, action, payload, agentId) => connections.command(action, payload, agentId));
 
-function validateArgs(args: unknown): string[] {
-  if (!Array.isArray(args) || args.some(value => typeof value !== 'string' || value.length > 100000)) {
-    throw new Error('Invalid Abra command arguments.');
-  }
-  return args;
-}
-
-function run(executable: string, args: string[], options: { cwd?: string; env?: NodeJS.ProcessEnv } = {}): Promise<string> {
-  return new Promise<string>((resolve, reject) => {
-    const child = spawn(executable, args, {
-      cwd: options.cwd,
-      windowsHide: true,
-      env: { ...process.env, ...options.env },
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
-    const stdout: Buffer[] = [];
-    const stderr: Buffer[] = [];
-    child.stdout.on('data', chunk => stdout.push(chunk));
-    child.stderr.on('data', chunk => stderr.push(chunk));
-    child.once('error', reject);
-    child.once('close', code => {
-      const out = Buffer.concat(stdout).toString('utf8');
-      const err = Buffer.concat(stderr).toString('utf8').trim();
-      if (code === 0) resolve(out);
-      else reject(new Error(err || out.trim() || `Abra exited with status ${code}.`));
-    });
-  });
-}
-
 async function local(args: string[]) {
-  const paths = runtime();
-  const script = path.join(paths.wrapper, 'bin', 'abra-teleport.js');
-  return run(paths.node, [script, ...validateArgs(args)], {
-    cwd: paths.wrapper,
-    env: {
-      ...(paths.asNode ? { ELECTRON_RUN_AS_NODE: '1' } : {}),
-      ABRA_BIN: paths.abra,
-      ABRA_BROWSER_ADAPTER: paths.adapter,
-      ABRA_TELEPORT_DESKTOP: '1',
-      PATH: [path.dirname(paths.node), process.env.PATH, '/usr/local/bin', '/opt/homebrew/bin', '/usr/bin', '/bin'].filter(Boolean).join(path.delimiter),
-    },
-  });
+  return teleport.raw(args);
 }
 
 ipcMain.handle('abra:local', (_event, args) => local(args));
@@ -118,3 +79,4 @@ app.whenReady().then(() => {
 });
 
 app.on('window-all-closed', () => app.quit());
+app.on('before-quit', () => { void teleport.close(); });
