@@ -1,5 +1,8 @@
+import https from 'node:https';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, readFile, writeFile } from 'node:fs/promises';
 import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
@@ -23,8 +26,9 @@ async function selectDevice(home) {
   delete process.env.ABRA_BROWSER_DATA_DIR;
 }
 
-async function withServer() {
-  const server = http.createServer((_request, response) => {
+async function withServer(tls?: { key: Buffer; cert: Buffer }) {
+  const serve = tls ? handler => https.createServer(tls, handler) : handler => http.createServer(handler);
+  const server = serve((_request, response) => {
     const body = '<!doctype html><title>Abra browser round trip</title><input id=typing autofocus><script>localStorage.setItem("booted","yes")</script>';
     response.writeHead(200, { 'content-type': 'text/html', 'content-length': Buffer.byteLength(body) });
     response.end(body);
@@ -32,7 +36,7 @@ async function withServer() {
   await new Promise<void>((resolve, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', () => resolve()); });
   const address = server.address();
   assert.ok(address && typeof address !== 'string');
-  return { server, url: `http://127.0.0.1:${address.port}/` };
+  return { server, url: `${tls ? 'https' : 'http'}://127.0.0.1:${address.port}/` };
 }
 
 async function seedBrowser(wsUrl, url) {
@@ -223,6 +227,63 @@ test('managed browser selects one tab, scopes cookies/storage, and rejects a cha
     await new Promise(resolve => web.server.close(resolve));
     Object.keys(process.env).forEach(key => { if (!(key in original)) delete process.env[key]; });
     Object.assign(process.env, original);
+    await rm(root, { recursive: true, force: true, maxRetries: 20, retryDelay: 200 });
+  }
+});
+
+test('manual override sends selected restricted cookies and storage through a real round trip', { skip: !enabled, timeout: 120000 }, async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'abra-ov-'));
+  const homes = [path.join(root, 'a'), path.join(root, 'b')];
+  const original = { ...process.env };
+  await promisify(execFile)('/usr/bin/openssl', ['req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-keyout', path.join(root, 'key.pem'), '-out', path.join(root, 'cert.pem'), '-days', '1', '-subj', '/CN=127.0.0.1']);
+  const web = await withServer({ key: await readFile(path.join(root, 'key.pem')), cert: await readFile(path.join(root, 'cert.pem')) });
+  const fixtureChrome = path.join(root, 'chrome');
+  await writeFile(fixtureChrome, '#!/bin/bash\nexec \"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome\" --ignore-certificate-errors \"$@\"\n', { mode: 0o700 });
+  process.env.CHROME_BIN = fixtureChrome;
+  process.env.ABRA_BIN = path.resolve(import.meta.dirname, '../../abra/target/release/abra');
+  process.env.ABRA_BROWSER_ADAPTER = path.resolve(import.meta.dirname, '../../abra/adapters/browser-session');
+  process.env.ABRA_TELEPORT_TRANSPORT = 'tcp';
+  process.env.ABRA_TELEPORT_BROWSER_SOURCE = 'managed';
+  delete process.env.ABRA_TELEPORT_CDP_URL;
+  try {
+    await selectDevice(homes[0]); await ensureDaemon();
+    const source = await ensureChrome({ headless: true });
+    await seedBrowser(source.wsUrl, web.url);
+    const cdp = await new CDP(source.wsUrl).connect();
+    try { await cdp.send('Storage.setCookies', { cookies: [{ name: 'device_bound_session', value: 'fixture', domain: '127.0.0.1', path: '/', httpOnly: true, secure: true }] }); }
+    finally { cdp.close(); }
+    const ticket = (await abra(['pair', 'ticket'])).ticket;
+    await selectDevice(homes[1]); await connectAgent(ticket, 'override fixture');
+    await ensureChrome({ headless: true });
+    await selectDevice(homes[0]);
+    const [agent] = await listAgents();
+    const tab = (await browserChromeTabs()).find(item => item.url === web.url)!;
+    const base = { profile: 'active', url: web.url, 'tab-id': tab.id };
+    const normal = await sandboxCommand('browser-up', agent, { ...base, 'all-cookies': true });
+    assert.equal(normal.cookie_count, 1, 'default excludes the restricted cookie');
+    await sandboxCommand('browser-revoke', agent, { session_id: normal.session.id });
+    const inventory = await browserCookieInventory('active', web.url, '', tab.id);
+    const key = inventory.domains.flatMap(item => item.cookies).find(cookie => cookie.name === 'device_bound_session')!.key;
+    const overridden = await sandboxCommand('browser-up', agent, { ...base, cookies: Buffer.from(JSON.stringify([key])).toString('base64url'), 'allow-non-portable': true });
+    assert.equal(overridden.cookie_count, 1, 'only the selected cookie is transferred');
+    const remote = JSON.parse(await agentRemote(agent, ['browser', 'status']));
+    assert.equal(remote.handoff.allow_non_portable, true);
+    const remoteState = await capture(remote.chrome.wsUrl, {}, { browserContextId: overridden.session.id });
+    assert.deepEqual(remoteState.cookies.map(cookie => cookie.name), ['device_bound_session']);
+    assert.equal(remoteState.origins[0].localStorage.find(item => item.name === 'roundtrip')?.value, 'local');
+    await sandboxCommand('browser-down', agent, { session_id: overridden.session.id, headless: true });
+    const local = await browserStatus();
+    const returned = await capture(local.chrome.wsUrl, {}, { browserContextId: local.handoff.active_context_id });
+    assert.equal(returned.cookies.find(cookie => cookie.name === 'device_bound_session')?.value, 'fixture');
+    assert.equal(returned.origins[0].localStorage.find(item => item.name === 'roundtrip')?.value, 'local');
+    const sourceTab = (await browserChromeTabs()).find(item => item.id === tab.id)!;
+    const next = await sandboxCommand('browser-up', agent, { profile: 'active', url: web.url, 'tab-id': sourceTab.id, 'all-cookies': true });
+    assert.equal(next.cookie_count, 1, 'override does not leak into the next transfer');
+    await sandboxCommand('browser-revoke', agent, { session_id: next.session.id });
+  } finally {
+    await new Promise(resolve => web.server.close(resolve));
+    for (const home of homes) { await selectDevice(home); await stopChrome().catch(() => {}); await stopDaemon().catch(() => {}); }
+    Object.keys(process.env).forEach(key => { if (!(key in original)) delete process.env[key]; }); Object.assign(process.env, original);
     await rm(root, { recursive: true, force: true, maxRetries: 20, retryDelay: 200 });
   }
 });

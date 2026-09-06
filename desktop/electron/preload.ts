@@ -9,7 +9,8 @@ const bridge: TeleportBridge = {
   connectionHealth: () => ipcRenderer.invoke('abra:connection-health'),
   agentList: () => ipcRenderer.invoke('abra:agent-list'),
   agentSelect: id => ipcRenderer.invoke('abra:agent-select', id),
-  sandbox: (action, payload) => ipcRenderer.invoke('abra:sandbox', action, payload),
+  agentRename: (id, name) => ipcRenderer.invoke('abra:agent-rename', id, name),
+  sandbox: (action, payload, agentId) => ipcRenderer.invoke('abra:sandbox', action, payload, agentId),
   local: args => ipcRenderer.invoke('abra:local', args),
 
 };

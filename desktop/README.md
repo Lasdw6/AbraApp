@@ -4,9 +4,13 @@ Electron UI for the sibling `abra-teleport` CLI. It connects to an internal agen
 
 Use **Connect your agent** to create one command that installs the CLI if needed and pairs it. Then select the connected sandbox and choose a browser tab to move. Connection checks and session actions travel through Abra’s authenticated control channel. The app shows session details, Bring back, and Revoke session; use the browser on the agent’s computer. Browser data use its signed snapshot transfer.
 
-The app preserves existing cookie selection and device-bound-session exclusions. A received session runs in an isolated browser context. Abra reuses a compatible browser on the sandbox’s display, or starts a visible browser there; it falls back to headless only when no display is available.
+Cookie review shows portability hints without claiming that a site will accept a copied session. Cookies flagged by the transfer rules are off by default. **Manually allow cookies and storage** enables them for the selected transfer; users can still deselect individual cookies and storage. The override resets when selecting or reloading a tab, and follows that session on its return trip. Both the desktop and agent CLI/browser adapter must support it; older agents are rejected before capture. The CLI equivalent is `--allow-non-portable`. Domain restrictions and signed transfers still apply. A received session runs in an isolated browser context. Abra reuses a compatible browser on the sandbox’s display, or starts a visible browser there; it falls back to headless only when no display is available.
 
-The Chrome tabs section switches between a list and cards. Cards show a capture of the tab when Chrome is showing it in a visible window; other tabs show the site icon. Captures go through the macOS window server, so the app needs Screen Recording permission. The header checks connection health every 15 seconds and shows the last successful contact time. Unreachable agents remain paired and can reconnect without setup.
+Chrome tabs appear in a list. Select a row to choose a paired agent and review the cookies before sending. Existing handoffs must be returned or revoked before choosing a different agent. The chosen destination is bound to the send request and becomes the current agent after a successful send.
+
+The app does not capture previews or run JavaScript through Apple Events. Regular Chrome tabs send their URL and selected site data without live scroll or playback capture.
+
+The header checks connection health every 15 seconds and shows the last successful contact time. Unreachable agents remain paired and can reconnect without setup.
 
 Source lives in `src/`, `electron/`, and `shared/` as TypeScript. The preload and renderer share one typed IPC contract. Install dependencies with `npm ci` from the repository root.
 

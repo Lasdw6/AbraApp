@@ -24,6 +24,7 @@ function domainOptions(flags, receiving = false) {
     throw new Error('pass --domains example.com or explicitly pass --all-domains');
   }
   const args: string[] = [];
+  if (flags['allow-non-portable'] === true) args.push('--adapter-option', 'allow_non_portable=true');
   if (included.length) args.push('--adapter-option', `${receiving ? 'allow_domains' : 'include_domains'}=${included.join(',')}`);
   if (excluded.length) args.push('--adapter-option', `${receiving ? 'deny_domains' : 'exclude_domains'}=${excluded.join(',')}`);
   return { args, included, excluded, all: !included.length };
@@ -109,7 +110,14 @@ export async function restoreTabLocations(cdpUrl, browserContextId, tabs: Browse
   } finally { cdp.close(); }
 }
 
+async function cookieOverrideSupported() {
+  const adapter = await browserAdapterDirectory();
+  return (await import(pathToFileURL(path.join(adapter, 'lib', 'util.js')).href)).supportsManualCookieOverride === true;
+}
+
 export async function browserPrepare(flags) {
+  const allowNonPortable = flags['allow-non-portable'] === true;
+  if (allowNonPortable && !await cookieOverrideSupported()) throw new Error('Update the browser adapter to use the manual override.');
   await requireDiskSpace(paths().home);
   await requireDiskSpace(paths().browserData);
   const profile = await ensureChromeProfile(flags.profile);
@@ -125,7 +133,7 @@ export async function browserPrepare(flags) {
 
   const current = await loadState();
   const chrome = await ensureChrome({ headless: true, reuse: false });
-  const selected = await selectedBrowserState(flags.profile, url, title, cookieKeys, flags['no-storage'] !== true, flags['tab-id'], flags['source-cdp']);
+  const selected = await selectedBrowserState(flags.profile, url, title, cookieKeys, flags['no-storage'] !== true, flags['tab-id'], flags['source-cdp'], allowNonPortable);
   await mkdir(paths().home, { recursive: true, mode: 0o700 });
   const bundle = await mkdtemp(path.join(paths().home, 'browser-selection-'));
   const previousBrowserData = process.env.ABRA_BROWSER_DATA_DIR;
@@ -134,12 +142,12 @@ export async function browserPrepare(flags) {
     const adapter = await browserAdapterDirectory();
     const { saveBundle } = await import(pathToFileURL(path.join(adapter, 'lib', 'util.js')).href);
     const { installBundle } = await import(pathToFileURL(path.join(adapter, 'lib', 'import.js')).href);
-    const manifest = await saveBundle(bundle, selected, { source: 'selected-chrome-tab', sourceBrowser: 'Google Chrome profile copy' });
+    const manifest = await saveBundle(bundle, selected, { source: 'selected-chrome-tab', sourceBrowser: 'Google Chrome profile copy', allowNonPortable });
     const portableCookieCount = manifest.domains.reduce((total, domain) => total + domain.cookie_count, 0);
     const omittedCookieCount = (manifest.non_teleportable || [])
       .filter(item => item.action === 'omitted')
       .reduce((total, item) => total + (item.cookie_count || 0), 0);
-    const installed = await installBundle(bundle, { type: 'cdp', cdpUrl: chrome.wsUrl }, { requireLocalTrust: true });
+    const installed = await installBundle(bundle, { type: 'cdp', cdpUrl: chrome.wsUrl }, { requireLocalTrust: true, policy: { allowNonPortable } });
     try { await restoreTabLocations(chrome.wsUrl, installed.receipt.browser_context_id, selected.tabs); }
     catch (error) {
       await revokeReceipt(installed.receiptPath).catch(() => {});
@@ -147,7 +155,7 @@ export async function browserPrepare(flags) {
     }
     await updateState(state => {
       state.browser = addBrowserSession(state.browser, {
-        active_context_id: installed.receipt.browser_context_id, active_receipt: installed.receiptPath,
+        allow_non_portable: allowNonPortable, active_context_id: installed.receipt.browser_context_id, active_receipt: installed.receiptPath,
         chrome_pid: chrome.pid, chrome_ws_url: chrome.wsUrl,
         prepared: { profile, url, title, cookie_count: portableCookieCount, omitted_cookie_count: omittedCookieCount, include_storage: flags['no-storage'] !== true }
       });
@@ -169,6 +177,7 @@ export async function browserSend(peer, flags, direction = 'up') {
   const policy = domainOptions(flags);
   const state = await loadState();
   const session = selectBrowserSession(state.browser, flags.session);
+  if (session.allow_non_portable === true && flags['allow-non-portable'] !== true) policy.args.push('--adapter-option', 'allow_non_portable=true');
   const destinationPeer = peer || session.from || state.browser.last_sent?.peer;
   if (!destinationPeer) throw new Error(`browser ${direction} needs a peer id`);
   const args = ['send', destinationPeer, '--kind', KIND, '--source', profile ? `local:${profile}` : `cdp:${chrome.wsUrl}`, ...policy.args];
@@ -195,6 +204,7 @@ export async function browserSend(peer, flags, direction = 'up') {
 }
 
 export async function browserReceive(requestedId, flags) {
+  if (flags['allow-non-portable'] === true && !await cookieOverrideSupported()) throw new Error('Update the browser adapter to use the manual override.');
   await requireDiskSpace(paths().home);
   await requireDiskSpace(paths().browserData);
   await ensureDaemon();
@@ -214,7 +224,7 @@ export async function browserReceive(requestedId, flags) {
     await restoreTabLocations(chrome.wsUrl, matched.receipt.browser_context_id, receivedState.tabs);
     await updateState(state => {
       state.browser = addBrowserSession(state.browser, {
-        active_context_id: matched.receipt.browser_context_id, active_receipt: matched.file,
+        allow_non_portable: flags['allow-non-portable'] === true, active_context_id: matched.receipt.browser_context_id, active_receipt: matched.file,
         chrome_pid: chrome.pid, chrome_ws_url: chrome.wsUrl, from: item.from,
         received_snapshot_id: item.id, received_at: item.received_at
       });
@@ -254,7 +264,7 @@ export async function browserRevoke(id?: string) {
 export async function browserStatus() {
   const state = await loadState();
   const chrome = await chromeStatus();
-  return { chrome, handoff: state.browser, sessions: browserSessions(state.browser), multiple_sessions: true };
+  return { chrome, handoff: state.browser, sessions: browserSessions(state.browser), multiple_sessions: true, manual_cookie_override: await cookieOverrideSupported() };
 }
 
 export async function browserExec(command) {

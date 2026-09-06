@@ -19,7 +19,7 @@ export function selectBrowserSession(browser, id?: string) {
 
 export function addBrowserSession(browser, session) {
   const sessions = browserSessions(browser).filter(item => item.active_context_id !== session.active_context_id);
-  const { active_context_id, active_receipt, chrome_pid, chrome_ws_url, prepared, from,
+  const { allow_non_portable, active_context_id, active_receipt, chrome_pid, chrome_ws_url, prepared, from,
     received_snapshot_id, received_at, sessions: oldSessions, ...history } = browser;
   return { ...history, ...session, sessions: [...sessions, session] };
 }
@@ -27,7 +27,7 @@ export function addBrowserSession(browser, session) {
 export function removeBrowserSession(browser, id: string) {
   const sessions = browserSessions(browser).filter(item => item.active_context_id !== id);
   if (browser.active_context_id !== id) return { ...browser, sessions };
-  const { active_context_id, active_receipt, chrome_pid, chrome_ws_url, prepared, from,
+  const { allow_non_portable, active_context_id, active_receipt, chrome_pid, chrome_ws_url, prepared, from,
     received_snapshot_id, received_at, sessions: oldSessions, ...history } = browser;
   return { ...history, ...(sessions.at(-1) || {}), ...(sessions.length ? { sessions } : {}) };
 }

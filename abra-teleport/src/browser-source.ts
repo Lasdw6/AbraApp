@@ -7,8 +7,10 @@ import { browserAdapterDirectory } from './abra.js';
 import { chromeStatus, ensureChrome, matchesBrowser } from './chrome.js';
 import { loadState } from './state.js';
 import { exists, run } from './util.js';
+import { cachedFavicons } from './favicon-cache.js';
+import { cookiePortability } from './cookie-portability.js';
 
-import { captureManagedTab, managedPreviews, managedTabs, usesManagedBrowser } from './managed-browser-source.js';
+import { captureManagedTab, managedTabs, usesManagedBrowser } from './managed-browser-source.js';
 
 const chromeRoot = path.join(os.homedir(), 'Library', 'Application Support', 'Google', 'Chrome');
 const chromeBinary = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
@@ -113,84 +115,15 @@ else JSON.stringify(chrome.windows().flatMap((window, windowIndex) =>
   }))
 ));`;
 
-const chromeLiveTabScript = `
-function run(argv) {
-  const chrome = Application('Google Chrome');
-  const windowId = Number(argv[0]), tabIndex = Number(argv[1]);
-  const windows = chrome.windows.whose({id: windowId})();
-  if (!windows.length || !windows[0].tabs[tabIndex - 1]) throw new Error('The selected Chrome tab is no longer open.');
-  const tab = windows[0].tabs[tabIndex - 1];
-  const javascript = 'JSON.stringify((()=>{const media=[...document.querySelectorAll("video,audio")].find(x=>!x.paused)||document.querySelector("video,audio");return {scroll:{x:scrollX,y:scrollY,historyLength:history.length},media:media?{currentTime:media.currentTime,paused:media.paused,playbackRate:media.playbackRate,volume:media.volume,muted:media.muted}:null}})())';
-  return JSON.stringify({url: tab.url(), title: tab.title(), runtime: JSON.parse(tab.execute({javascript}))});
-}`;
-
-// Captures each Chrome window through the window server and reports which tab it was showing.
-// Chrome only paints web content for windows that are on screen, so covered or off-space windows come back blank.
-const chromeWindowCaptureScript = `
-ObjC.import('CoreGraphics'); ObjC.import('AppKit');
-function run(argv) {
-  const dir = argv[0];
-  const chrome = Application('Google Chrome');
-  if (!chrome.running()) return JSON.stringify({ windows: [], permission: true });
-  const cg = ObjC.deepUnwrap(ObjC.castRefToObject($.CGWindowListCopyWindowInfo(16, 0)))
-    .filter(w => w.kCGWindowOwnerName === 'Google Chrome' && w.kCGWindowLayer === 0);
-  const permission = cg.some(w => typeof w.kCGWindowName === 'string' && w.kCGWindowName.length > 0);
-  const near = (a, b) => Math.abs(a - b) < 2;
-  // Sample the page area. One flat colour means Chrome is not painting this window.
-  const flat = rep => {
-    const w = rep.pixelsWide, h = rep.pixelsHigh;
-    let min = [1, 1, 1], max = [0, 0, 0];
-    for (let i = 0; i < 8; i++) for (let j = 0; j < 8; j++) {
-      const c = rep.colorAtXY(Math.floor(w * (0.2 + 0.75 * i / 7)), Math.floor(h * (0.3 + 0.65 * j / 7)));
-      const parts = [c.redComponent, c.greenComponent, c.blueComponent];
-      min = min.map((v, k) => Math.min(v, parts[k])); max = max.map((v, k) => Math.max(v, parts[k]));
-    }
-    return max.every((v, k) => v - min[k] < 0.03);
-  };
-  let blank = 0;
-  const windows = [];
-  chrome.windows().forEach(window => {
-    if (window.minimized()) return;
-    const b = window.bounds();
-    const match = cg.find(w => near(w.kCGWindowBounds.X, b.x) && near(w.kCGWindowBounds.Y, b.y) && near(w.kCGWindowBounds.Width, b.width) && near(w.kCGWindowBounds.Height, b.height));
-    if (!match) return;
-    const rep = $.NSBitmapImageRep.alloc.initWithCGImage($.CGWindowListCreateImage($.CGRectNull, 8, match.kCGWindowNumber, 0));
-    if (rep.isNil()) return;
-    if (flat(rep)) { blank++; return; }
-    const data = rep.representationUsingTypeProperties($.NSBitmapImageFileTypeJPEG, $({ NSImageCompressionFactor: 0.7 }));
-    const file = dir + '/' + String(window.id()) + '.jpg';
-    if (!data.writeToFileAtomically(file, true)) return;
-    windows.push({ windowId: String(window.id()), tabIndex: window.activeTabIndex(), file });
-  });
-  return JSON.stringify({ windows, permission, blank });
-}`;
-
-export async function browserTabPreviews() {
-  if (usesManagedBrowser()) return { previews: await managedPreviews() };
-  if (process.platform !== 'darwin') return { previews: {}, reason: 'Tab previews are only available on macOS.' };
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'abra-teleport-previews-'));
-  try {
-    const { stdout } = await run('/usr/bin/osascript', ['-l', 'JavaScript', '-e', chromeWindowCaptureScript, '--', dir]);
-    const result = JSON.parse(stdout);
-    const previews = {};
-    for (const window of result.windows) {
-      await run('/usr/bin/sips', ['--resampleWidth', '640', window.file]).catch(() => {});
-      previews[`${window.windowId}:${window.tabIndex}`] = `data:image/jpeg;base64,${(await readFile(window.file)).toString('base64')}`;
-    }
-    if (!result.permission) return { previews, reason: 'Allow Screen Recording for Abra Teleport in System Settings to see tab previews.' };
-    if (result.blank && !result.windows.length) return { previews, reason: 'Previews appear for Chrome windows that are visible on screen.' };
-    return { previews };
-  } finally {
-    await rm(dir, { recursive: true, force: true }).catch(() => {});
-  }
-}
-
 export async function browserChromeTabs() {
   if (usesManagedBrowser()) return managedTabs();
   const { stdout } = await run('/usr/bin/osascript', ['-l', 'JavaScript', '-e', chromeTabsScript]);
-  return JSON.parse(stdout)
+  const tabs = JSON.parse(stdout)
     .filter(tab => { try { return ['http:', 'https:'].includes(new URL(tab.url).protocol); } catch { return false; } })
     .map(tab => ({ ...tab, host: new URL(tab.url).hostname.toLowerCase() }));
+  const profiles = (await browserProfiles()).filter(profile => profile.directory !== 'active');
+  const icons = await cachedFavicons(tabs.map(tab => tab.url), profiles.map(profile => path.join(chromeRoot, profile.directory)));
+  return tabs.map(tab => ({ ...tab, favicon: icons.get(tab.url) }));
 }
 
 export async function browserProfiles() {
@@ -252,28 +185,13 @@ function isGoogleOrYouTubeHost(value) {
     || /(^|\.)google\.[a-z]{2,}(?:\.[a-z]{2})?$/.test(hostname);
 }
 
-async function captureLiveTab(tabId, expectedURL) {
-  const match = String(tabId || '').match(/^(\d+):(\d+)$/);
-  if (!match || process.platform !== 'darwin') return { available: false, reason: 'Live tab capture is unavailable.' };
-  try {
-    const { stdout } = await run('/usr/bin/osascript', ['-l', 'JavaScript', '-e', chromeLiveTabScript, '--', match[1], match[2]]);
-    const live = JSON.parse(stdout);
-    if (new URL(live.url).href !== new URL(expectedURL).href) throw new Error('The selected Chrome tab changed before capture.');
-    return { available: true, ...live.runtime };
-  } catch (error) {
-    const reason = /Executing JavaScript through AppleScript is turned off/.test(error.message)
-      ? 'In Chrome, enable View → Developer → Allow JavaScript from Apple Events, then refresh.'
-      : error.message;
-    return { available: false, reason };
-  }
-}
-
 function parentDomain(hostname, candidates) {
   const matches = [...candidates].filter(candidate => hostname === candidate || hostname.endsWith('.' + candidate));
   return matches.sort((a, b) => b.length - a.length)[0] || hostname;
 }
 
-function summarize(state, profile, buildManifest) {
+async function summarize(state, profile, buildManifest, protectedSite = false) {
+  const { nonPortableCookieReasons } = await browserUtil();
   const cookieDomains = new Set((state.cookies || []).map(cookieHost).filter(Boolean));
   const originDomains = new Set((state.origins || []).map(item => host(item.origin)).filter(Boolean));
   const tabDomains = new Set((state.tabs || []).map(item => host(item.url)).filter(Boolean));
@@ -296,7 +214,8 @@ function summarize(state, profile, buildManifest) {
       secure: Boolean(cookie.secure),
       sameSite: cookie.sameSite || null,
       session: !cookie.expires || cookie.expires < 0,
-      key: cookieKey(cookie)
+      key: cookieKey(cookie),
+      portability: cookiePortability(cookie, nonPortableCookieReasons(cookie), protectedSite)
     });
   }
   for (const tab of state.tabs || []) {
@@ -407,7 +326,7 @@ export async function browserCookieInventory(profile, url, title = '', tabId = '
     const state = await captureManagedTab(tabId, url, { metadataOnly: true });
     state.cookies = state.cookies.filter(cookie => cookieAppliesTo(cookie, new URL(url)));
     const { buildManifest } = await browserUtil();
-    return { ...summarize(state, profile, buildManifest), liveState: { available: true, ...state.tabs[0] } };
+    return summarize(state, profile, buildManifest, isGoogleOrYouTubeHost(new URL(url).hostname));
   }
   if (process.platform !== 'darwin') throw new Error('Select the Abra capture window.');
   const selectedURL = new URL(url);
@@ -449,20 +368,19 @@ export async function browserCookieInventory(profile, url, title = '', tabId = '
       }
     } : {})
   })).filter(cookie => cookieAppliesTo(cookie, selectedURL));
-  const liveState = await captureLiveTab(tabId, selectedURL.href);
   const state = {
     cookies,
     origins: [],
     tabs: [{ url: selectedURL.href, title: title || selectedURL.hostname, scroll: { x: 0, y: 0, historyLength: 1 } }]
   };
   const { buildManifest } = await browserUtil();
-  return { ...summarize(state, profile, buildManifest), liveState };
+  return summarize(state, profile, buildManifest, isGoogleOrYouTubeHost(new URL(url).hostname));
 }
 
-export async function selectedBrowserState(profile, url, title, selectedCookieKeys, includeStorage = true, tabId = '', sourceCdp?: string) {
+export async function selectedBrowserState(profile, url, title, selectedCookieKeys, includeStorage = true, tabId = '', sourceCdp?: string, allowNonPortable = false) {
   const requestedURL = new URL(url);
   if (!['http:', 'https:'].includes(requestedURL.protocol)) throw new Error('select an HTTP or HTTPS Chrome tab');
-  const protectedGoogleState = isGoogleOrYouTubeHost(requestedURL.hostname);
+  const protectedGoogleState = isGoogleOrYouTubeHost(requestedURL.hostname) && allowNonPortable !== true;
   let selectedURL = requestedURL;
   let state;
   if (profile === 'active') {
@@ -489,16 +407,10 @@ export async function selectedBrowserState(profile, url, title, selectedCookieKe
     }
   }
   if (!includeStorage || protectedGoogleState) state.origins = [];
-  const liveState = await captureLiveTab(tabId, selectedURL.href);
-  const tabURL = new URL(selectedURL.href);
-  if (liveState.available && liveState.media && /(^|\.)youtube\.com$/i.test(tabURL.hostname)) {
-    tabURL.searchParams.set('t', `${Math.max(0, Math.floor(liveState.media.currentTime || 0))}s`);
-  }
   state.tabs = [{
-    url: tabURL.href,
+    url: selectedURL.href,
     title: title || selectedURL.hostname,
-    scroll: liveState.available ? liveState.scroll : { x: 0, y: 0, historyLength: 1 },
-    ...(liveState.available && liveState.media ? { media: liveState.media } : {})
+    scroll: { x: 0, y: 0, historyLength: 1 }
   }];
   return state;
 }

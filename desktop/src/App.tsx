@@ -4,27 +4,29 @@ import type { BrowserSession, ConnectionHealth } from '../shared/contracts';
 
 type Endpoint = { provider: ProviderConfig };
 type Profile = { directory: string; name: string; account?: string | null; lastUsed?: boolean };
-type Tab = { id: string; windowIndex: number; tabIndex: number; title: string; url: string; host: string; active: boolean };
-type Cookie = { key: string; name: string; domain: string; path: string; httpOnly: boolean; secure: boolean; sameSite?: string | null; session: boolean };
+type Tab = { id: string; windowIndex: number; tabIndex: number; title: string; url: string; host: string; active: boolean; favicon?: string };
+type Portability = { status: 'excluded' | 'possible' | 'no-known-restriction'; reasons: string[] };
+type Cookie = { portability?: Portability; key: string; name: string; domain: string; path: string; httpOnly: boolean; secure: boolean; sameSite?: string | null; session: boolean };
 type Domain = { domain: string; cookies: Cookie[]; localStorage: string[]; sessionStorage: string[]; indexedDB: string[]; warnings: string[] };
-type LiveState = { available: boolean; reason?: string; scroll?: { x: number; y: number; historyLength: number }; media?: { currentTime: number; paused: boolean; playbackRate: number; volume: number; muted: boolean } | null };
-type Inventory = { profile: string; domains: Domain[]; liveState?: LiveState };
-type RemoteTab = { id: string; title: string; url: string; host: string };
+type Inventory = { profile: string; domains: Domain[] };
+type RemoteTab = { id: string; title: string; url: string; host: string; favicon?: string };
 type Incoming = { id: string; received_at: string };
-type Previews = { previews: Record<string, string>; reason?: string };
 // One short line of feedback, shown next to the thing the user just did.
 type Notice = { text: string; error?: boolean } | null;
 type Area = 'sessions' | 'tabs' | 'send' | 'remote';
 
 function parseJSON<T>(raw: string): T { return JSON.parse(raw) as T; }
 function message(error: unknown) { return error instanceof Error ? error.message : String(error); }
-function formatDuration(value: number) { const seconds = Math.max(0, Math.floor(value)); return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`; }
 function isGitHub(host: string) { return host === 'github.com' || host.endsWith('.github.com'); }
 function isGitHubLoginCookie(name: string) { return name === 'user_session' || name === '__Host-user_session_same_site'; }
 function isVercel(host: string) { return host === 'vercel.com' || host.endsWith('.vercel.com'); }
 function isVercelLoginCookie(name: string) { return ['authorization', 'isLoggedIn', 'lastUsedAuth', 'scope', 'teamsCache', 'userCache', 'userDisplayCache'].includes(name); }
 function isYouTube(host: string) { return host === 'youtube.com' || host.endsWith('.youtube.com'); }
 function isGoogleOrYouTube(host: string) { return isYouTube(host) || host === 'google.com' || host.endsWith('.google.com') || /(^|\.)google\.[a-z]{2,}(?:\.[a-z]{2})?$/.test(host); }
+function cookieExcluded(cookie: Cookie) { return cookie.portability?.status === 'excluded'; }
+function cookieStatus(cookie: Cookie) {
+  return cookie.portability?.status === 'excluded' ? 'May not transfer' : cookie.portability?.status === 'possible' ? 'Possibly device-bound' : cookie.portability ? 'No known restriction' : 'Not checked';
+}
 function displayHost(host: string) { return host.replace(/^www\./, ''); }
 function hostOf(url: string) { try { return new URL(url).hostname; } catch { return url; } }
 
@@ -33,13 +35,14 @@ async function local<T>(args: string[]): Promise<T> {
   return parseJSON<T>(await window.abra.local(args));
 }
 
-// Site icon fetched from the site itself, so tab hosts are not sent to a third-party icon service.
-function Favicon({ host, large }: { host: string; large?: boolean }) {
+// Cached PNGs travel with the tab list; icon rendering makes no network requests.
+function Favicon({ host, icon }: { host: string; icon?: string }) {
   const [failed, setFailed] = useState(false);
-  useEffect(() => setFailed(false), [host]);
-  return <span className={`icon ${large ? 'large' : ''}`} aria-hidden>
-    {failed || !host ? <span className="favicon fallback">{displayHost(host).charAt(0).toUpperCase()}</span>
-      : <img className="favicon" src={`https://${host}/favicon.ico`} alt="" onError={() => setFailed(true)} />}
+  useEffect(() => setFailed(false), [host, icon]);
+  const cached = icon?.startsWith('data:image/png;base64,') ? icon : undefined;
+  return <span className="icon" aria-hidden>
+    {failed || !cached ? <span className="favicon fallback">{displayHost(host).charAt(0).toUpperCase()}</span>
+      : <img className="favicon" src={cached} alt="" onError={() => setFailed(true)} />}
   </span>;
 }
 
@@ -48,7 +51,7 @@ function NoticeLine({ notice, busy }: { notice?: Notice; busy?: boolean }) {
   return <p className={`notice ${notice.error ? 'error' : ''}`} role="status" aria-live="polite">{busy && !notice.error && <span className="spinner" />}{notice.text}</p>;
 }
 
-function Browser({ endpoint, profiles, initialTabs, connected, reload }: { endpoint: Endpoint; profiles: Profile[]; initialTabs: Tab[]; connected: boolean; reload: () => Promise<Tab[]> }) {
+function Browser({ endpoint, profiles, initialTabs, connected, reload, onAgentChanged }: { endpoint: Endpoint; profiles: Profile[]; initialTabs: Tab[]; connected: boolean; reload: () => Promise<Tab[]>; onAgentChanged: () => Promise<void> }) {
   const [tabs, setTabs] = useState(initialTabs);
   const managed = profiles.length === 1 && profiles[0].directory === 'active';
   const [profile, setProfile] = useState(profiles.find(item => item.directory !== 'active')?.directory || profiles[0]?.directory || '');
@@ -56,17 +59,25 @@ function Browser({ endpoint, profiles, initialTabs, connected, reload }: { endpo
   const [inventory, setInventory] = useState<Inventory | null>(null);
   const [cookieKeys, setCookieKeys] = useState<Set<string>>(new Set());
   const [includeStorage, setIncludeStorage] = useState(true);
+  const [manualOverride, setManualOverride] = useState(false);
   const [editing, setEditing] = useState(false);
+  const sendPanelRef = useRef<HTMLDivElement>(null);
   const [search, setSearch] = useState('');
   const [busy, setBusy] = useState(false);
   const [sessions, setSessions] = useState<BrowserSession[]>([]);
   const [remoteOpen, setRemoteOpen] = useState(false);
   const [remoteTabs, setRemoteTabs] = useState<RemoteTab[]>([]);
   const [incoming, setIncoming] = useState<Incoming[]>([]);
-  const [view, setView] = useState<'list' | 'cards'>(() => localStorage.getItem('abra.tabView') === 'list' ? 'list' : 'cards');
-  const chooseView = (next: 'list' | 'cards') => { setView(next); localStorage.setItem('abra.tabView', next); };
-  const [previews, setPreviews] = useState<Record<string, string>>({});
-  const [previewNote, setPreviewNote] = useState('');
+  const [agents, setAgents] = useState<ProviderConfig[]>([]);
+  const [agentsLoading, setAgentsLoading] = useState(false);
+  const [agentsError, setAgentsError] = useState('');
+  const [targetId, setTargetId] = useState(endpoint.provider.id);
+  const loadAgents = async () => {
+    setAgentsLoading(true); setAgentsError('');
+    try { setAgents(await window.abra!.agentList()); }
+    catch (error) { setAgentsError(message(error)); }
+    finally { setAgentsLoading(false); }
+  };
   const [notices, setNotices] = useState<Partial<Record<Area, Notice>>>({});
   const say = (area: Area, text: string, error = false) => setNotices({ [area]: { text, error } });
   const fail = (area: Area, error: unknown) => say(area, `Failed: ${message(error)}`, true);
@@ -76,7 +87,7 @@ function Browser({ endpoint, profiles, initialTabs, connected, reload }: { endpo
     const entries = result.active.browsers || (result.active.browser ? [result.active.browser] : []);
     setSessions(entries); return entries;
   };
-  const clearSelection = () => { setSelected(null); setInventory(null); setCookieKeys(new Set()); setEditing(false); };
+  const clearSelection = () => { setSelected(null); setInventory(null); setCookieKeys(new Set()); setEditing(false); setManualOverride(false); };
 
   useEffect(() => {
     if (busy || !window.abra) return;
@@ -87,13 +98,9 @@ function Browser({ endpoint, profiles, initialTabs, connected, reload }: { endpo
   }, [busy]);
   useEffect(() => setTabs(initialTabs), [initialTabs]);
   useEffect(() => {
-    if (!tabs.length || view !== 'cards') { setPreviews({}); setPreviewNote(''); return; }
-    let cancelled = false;
-    local<Previews | null>(['browser', 'tab-previews'])
-      .then(result => { if (!cancelled) { setPreviews(result?.previews || {}); setPreviewNote(result?.reason || ''); } })
-      .catch(error => { if (!cancelled) setPreviewNote(message(error)); });
-    return () => { cancelled = true; };
-  }, [tabs, view]);
+    if (selected) sendPanelRef.current?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  }, [selected?.id, inventory]);
+  useEffect(() => { if (selected) void loadAgents(); }, [selected?.id, endpoint.provider]);
   useEffect(() => { refreshSessions().catch(error => fail('sessions', error)); }, [endpoint.provider.id]);
   useEffect(() => {
     const first = profiles.find(item => item.directory !== 'active') || profiles[0];
@@ -101,10 +108,16 @@ function Browser({ endpoint, profiles, initialTabs, connected, reload }: { endpo
   }, [profiles, profile]);
 
   const cookies = useMemo(() => inventory?.domains.flatMap(item => item.cookies) || [], [inventory]);
-  const warnings = useMemo(() => [...new Set(inventory?.domains.flatMap(item => item.warnings) || [])], [inventory]);
+  const sendableCookies = useMemo(() => cookies.filter(cookie => manualOverride || !cookieExcluded(cookie)), [cookies, manualOverride]);
+  const restrictedCookies = cookies.some(cookieExcluded);
   const githubTab = Boolean(selected && isGitHub(selected.host));
   const vercelTab = Boolean(selected && isVercel(selected.host));
   const protectedGoogleTab = Boolean(selected && isGoogleOrYouTube(selected.host));
+  const urlOnly = protectedGoogleTab && !manualOverride;
+  const toggleOverride = (enabled: boolean) => {
+    setManualOverride(enabled);
+    setCookieKeys(new Set(enabled ? cookies.map(cookie => cookie.key) : protectedGoogleTab ? [] : cookies.filter(cookie => !cookieExcluded(cookie)).map(cookie => cookie.key)));
+  };
   const isLoginCookie = (name: string) => (githubTab && isGitHubLoginCookie(name)) || (vercelTab && isVercelLoginCookie(name));
   const loginCookies = useMemo(() => cookies.filter(cookie => isLoginCookie(cookie.name)), [cookies, githubTab, vercelTab]);
   const hasPrimaryLoginCookie = !githubTab && !vercelTab ? true : cookies.some(cookie => githubTab ? cookie.name === 'user_session' : cookie.name === 'authorization');
@@ -113,17 +126,18 @@ function Browser({ endpoint, profiles, initialTabs, connected, reload }: { endpo
   const visibleTabs = useMemo(() => tabs.filter(tab => `${tab.title} ${tab.host}`.toLowerCase().includes(search.toLowerCase())).sort((a, b) => Number(b.active) - Number(a.active)), [tabs, search]);
 
   const inspect = async (tab: Tab, chosenProfile = profile) => {
-    setSelected(tab); setInventory(null); setCookieKeys(new Set()); setEditing(false); setBusy(true); setNotices({});
+    if (busy) return;
+    setManualOverride(false); setSelected(tab); setInventory(null); setCookieKeys(new Set()); setEditing(false); setBusy(true); setNotices({});
     try {
       const data = await local<Inventory>(['browser', 'cookie-inventory', '--profile', chosenProfile, '--url', tab.url, '--title', tab.title, '--tab-id', tab.id]);
       setInventory(data);
-      setCookieKeys(new Set(isGoogleOrYouTube(tab.host) ? [] : data.domains.flatMap(item => item.cookies.map(cookie => cookie.key))));
+      setCookieKeys(new Set(isGoogleOrYouTube(tab.host) ? [] : data.domains.flatMap(item => item.cookies.filter(cookie => !cookieExcluded(cookie)).map(cookie => cookie.key))));
     } catch (error) { fail('send', error); }
     finally { setBusy(false); }
   };
   const refreshTabs = async () => {
     setBusy(true); setNotices({});
-    try { await reload(); } catch (error) { fail('tabs', error); } finally { setBusy(false); }
+    try { await reload(); clearSelection(); } catch (error) { fail('tabs', error); } finally { setBusy(false); }
   };
   const openAbraBrowser = async () => {
     setBusy(true);
@@ -131,23 +145,23 @@ function Browser({ endpoint, profiles, initialTabs, connected, reload }: { endpo
     catch (error) { fail('tabs', error); } finally { setBusy(false); }
   };
   const chooseProfile = (directory: string) => { setProfile(directory); if (selected) void inspect(selected, directory); };
-  const toggleCookie = (key: string) => setCookieKeys(current => { const next = new Set(current); next.has(key) ? next.delete(key) : next.add(key); return next; });
+  const toggleCookie = (key: string) => { if (!sendableCookies.some(cookie => cookie.key === key)) return; setCookieKeys(current => { const next = new Set(current); next.has(key) ? next.delete(key) : next.add(key); return next; }); };
 
   const send = async () => {
-    if (!selected || !inventory) return;
+    if (!selected || !inventory || !targetId || busy) return;
     setBusy(true); say('send', 'Sending…');
     try {
       if (!window.abra) throw new Error('Open the installed Abra Teleport desktop app.');
       const encoded = btoa(JSON.stringify([...cookieKeys].sort()));
       await window.abra.sandbox('browser-up', {
         profile, url: selected.url, title: selected.title, 'tab-id': selected.id, cookies: encoded,
-        ...(!protectedGoogleTab && cookieKeys.size === cookies.length ? { 'all-cookies': true } : {}),
-        ...(!includeStorage || protectedGoogleTab ? { 'no-storage': true } : {}),
-      });
+        ...(!includeStorage || urlOnly ? { 'no-storage': true } : {}),
+        ...(manualOverride ? { 'allow-non-portable': true } : {}),
+      }, targetId);
       await refreshSessions(); clearSelection();
       say('sessions', `${displayHost(selected.host)} is live in the sandbox.`);
     } catch (error) { fail('send', error); }
-    finally { setBusy(false); }
+    finally { setBusy(false); await onAgentChanged(); }
   };
   const bringBack = async (session: BrowserSession) => {
     setBusy(true); say('sessions', 'Bringing the tab back…');
@@ -189,34 +203,49 @@ function Browser({ endpoint, profiles, initialTabs, connected, reload }: { endpo
   };
 
   const summary = () => {
-    const parts = [protectedGoogleTab ? 'No cookies' : `${cookieKeys.size} of ${cookies.length} cookies`];
-    parts.push(includeStorage && !protectedGoogleTab ? 'site storage' : 'no site storage');
-    const live = inventory?.liveState;
-    if (live?.available) parts.push(live.media ? `playback at ${formatDuration(live.media.currentTime)}${live.media.paused ? ', paused' : ''}` : 'scroll position');
+    const parts = [urlOnly ? 'No cookies' : `${cookieKeys.size} of ${cookies.length} cookies`];
+    parts.push(includeStorage && !urlOnly ? 'site storage' : 'no site storage');
     return parts.join(' · ');
   };
-  const sendPanel = (inline: boolean) => selected && <div className={`send ${inline ? 'inline' : ''}`}>
-    {!inline && <div className="send-head"><Favicon host={selected.host} /><span className="title">{selected.title || selected.host}</span><span className="meta">{displayHost(selected.host)}</span></div>}
+  const target = agents.find(agent => agent.id === targetId);
+  const targetOffline = targetId === endpoint.provider.id && !connected;
+  const targetBlocked = sessions.length > 0 && targetId !== endpoint.provider.id;
+  const sendPanel = () => selected && <div ref={sendPanelRef} className="send inline" role="region" aria-label={`Send ${selected.title || selected.host}`}>
+    <label className="send-destination"><span>Send to</span>
+      <select aria-label="Agent to send tab to" value={targetId} disabled={busy || agentsLoading} onChange={event => setTargetId(event.target.value)}>
+        {!target && <option value="">Choose an agent</option>}
+        {agents.map(agent => <option key={agent.id} value={agent.id}>{agent.name} · {agent.id.slice(0, 8)}{agent.id === endpoint.provider.id && connected ? ' · Connected' : ''}</option>)}
+      </select>
+      <button className="link" disabled={busy || agentsLoading} onClick={loadAgents}>{agentsLoading ? 'Finding agents…' : 'Refresh agents'}</button>
+    </label>
+    {agentsError && <p className="notice error" role="status">Could not load agents: {agentsError}</p>}
+    {!agentsLoading && !agentsError && !agents.length && <p className="muted">No paired agents found. Connect one from the agent menu above.</p>}
+    {targetBlocked && <p className="warning">Bring back or revoke the current handoffs before sending to a different agent.</p>}
     {!inventory && busy && <p className="notice"><span className="spinner" />Reading site data…</p>}
+    {!inventory && !busy && <div className="send-actions"><button onClick={() => inspect(selected)}>Try again</button><button className="link" onClick={clearSelection}>Cancel</button></div>}
     {inventory && <>
-      <div className="send-summary"><span>{summary()}</span>{!protectedGoogleTab && <button className="link" disabled={busy} onClick={() => setEditing(!editing)}>{editing ? 'Done' : 'Edit'}</button>}</div>
+      <div className="send-summary"><span>{summary()}</span><button className="link" disabled={busy} onClick={() => setEditing(!editing)}>{editing ? 'Hide cookies' : 'Review cookies'}</button></div>
       {editing && <div className="send-edit">
-        <div className="send-edit-head"><span className="muted">Cookies</span><span className="actions"><button className="link" onClick={() => selected && inspect(selected)}>Reload</button><button className="link" onClick={() => setCookieKeys(new Set(cookies.map(cookie => cookie.key)))}>All</button><button className="link" onClick={() => setCookieKeys(new Set())}>None</button></span></div>
-        {cookies.length ? <ul className="cookies">{cookies.map(cookie => <li key={cookie.key}><label>
-          <input type="checkbox" checked={cookieKeys.has(cookie.key)} onChange={() => toggleCookie(cookie.key)} />
-          <span className="cookie-name">{cookie.name}</span><span className="meta">{cookie.domain}</span>{isLoginCookie(cookie.name) && <span className="tag">login</span>}
+        <div className="send-edit-head"><span className="muted">Cookies</span><span className="actions"><button className="link" disabled={busy} onClick={() => selected && inspect(selected)}>Reload</button><button className="link" disabled={busy || urlOnly} onClick={() => setCookieKeys(new Set(sendableCookies.map(cookie => cookie.key)))}>All</button><button className="link" disabled={busy} onClick={() => setCookieKeys(new Set())}>None</button></span></div>
+        {cookies.length ? <ul className="cookies">{cookies.map(cookie => <li key={cookie.key} ><label>
+          <input type="checkbox" disabled={busy || (!manualOverride && cookieExcluded(cookie)) || urlOnly} checked={cookieKeys.has(cookie.key)} onChange={() => toggleCookie(cookie.key)} />
+          <span className="cookie-details"><span className="cookie-heading"><span className="cookie-name">{cookie.name}</span><span className="meta">{cookie.domain}</span>{isLoginCookie(cookie.name) && <span className="tag">login</span>}</span>
+            <span className="cookie-status">{cookieStatus(cookie)}</span>
+            <span className="cookie-reason">{cookie.portability?.reasons.join(' ') || 'This CLI has not checked the cookie’s portability.'}</span>
+          </span>
         </label></li>)}</ul> : <p className="muted">No cookies for this site in the chosen profile.</p>}
-        <label className="check"><input type="checkbox" checked={includeStorage} onChange={event => setIncludeStorage(event.target.checked)} /><span>Include site storage <span className="meta">localStorage, sessionStorage, IndexedDB</span></span></label>
+        <label className="check"><input type="checkbox" disabled={busy || urlOnly} checked={includeStorage && !urlOnly} onChange={event => setIncludeStorage(event.target.checked)} /><span>Include site storage <span className="meta">localStorage, sessionStorage, IndexedDB</span></span></label>
         <p className="muted">Cookie values stay hidden here and travel encrypted.</p>
       </div>}
-      {inventory.liveState && !inventory.liveState.available && inventory.liveState.reason && <p className="warning">{inventory.liveState.reason}</p>}
-      {protectedGoogleTab && <p className="warning">Abra does not copy cookies or storage from Google or YouTube. Replaying those login cookies can sign this computer out. The URL and playback position still move.</p>}
-      {warnings.length > 0 && <p className="warning">Some selected cookies may be bound to this device and could fail in the sandbox.</p>}
+      {(protectedGoogleTab || restrictedCookies) && <div className="override">
+        <label className="check"><input type="checkbox" disabled={busy} checked={manualOverride} onChange={event => toggleOverride(event.target.checked)} /><span>Manually allow cookies and storage</span></label>
+        <p className="muted">{manualOverride ? 'This may sign you out or fail in the sandbox. Applies to this transfer only.' : urlOnly ? 'Only the URL will be sent unless you enable the override.' : 'Some cookies are off by default. Enable the override to include them.'}</p>
+      </div>}
       {loginSite && !hasPrimaryLoginCookie && <p className="warning">This Chrome profile is not signed in to {loginSite}. Sign in, then reload the cookies.</p>}
       {loginSite && hasPrimaryLoginCookie && !loginReady && <p className="warning">Select every {loginSite} login cookie.</p>}
-      {!connected && <p className="warning">The agent is unreachable. Sending is paused until it reconnects.</p>}
+      {targetOffline && <p className="warning">The agent is unreachable. Sending is paused until it reconnects.</p>}
       <div className="send-actions">
-        <button className="primary" disabled={busy || !connected || !loginReady} onClick={send}>{loginReady ? `Send to ${endpoint.provider.name}` : `Select ${loginSite} login cookies`}</button>
+        <button className="primary" disabled={busy || agentsLoading || !target || targetOffline || targetBlocked || !loginReady} onClick={send}>{loginReady ? `Send to ${target?.name || 'agent'}` : `Select ${loginSite} login cookies`}</button>
         <button className="link" disabled={busy} onClick={clearSelection}>Cancel</button>
       </div>
     </>}
@@ -229,53 +258,12 @@ function Browser({ endpoint, profiles, initialTabs, connected, reload }: { endpo
     {(sessions.length > 0 || notices.sessions) && <section>
       <div className="section-head"><h2>In the sandbox</h2></div>
       <ul className="rows">{sessions.map(session => <li key={session.id || 'legacy'} className="row static">
-        <Favicon host={hostOf(session.url)} /><span className="title">{session.title || hostOf(session.url)}</span>
+        <Favicon host={hostOf(session.url)} icon={tabs.find(tab => tab.url === session.url && tab.favicon)?.favicon || tabs.find(tab => tab.host === hostOf(session.url) && tab.favicon)?.favicon} /><span className="title">{session.title || hostOf(session.url)}</span>
         <span className="meta">{displayHost(hostOf(session.url))} · {session.cookie_count} cookies{session.include_storage ? ' · storage' : ''}</span>
-        <span className="actions"><button disabled={busy} onClick={() => bringBack(session)}>Bring back</button><button className="danger" disabled={busy} onClick={() => revoke(session)}>Revoke</button></span>
+        <span className="actions"><button disabled={busy || !connected} onClick={() => bringBack(session)}>Bring back</button><button className="danger" disabled={busy || !connected} onClick={() => revoke(session)}>Revoke</button></span>
       </li>)}</ul>
       <NoticeLine notice={notices.sessions} busy={busy} />
     </section>}
-
-    <section>
-      <div className="section-head">
-        <h2>Chrome tabs <span className="count">{tabCount}</span></h2>
-        <span className="actions">
-          {managed && <button disabled={busy} onClick={openAbraBrowser}>Open Abra browser</button>}
-          {!managed && profileChoices.length > 1 && <select value={profile} disabled={busy} aria-label="Chrome profile for cookies" onChange={event => chooseProfile(event.target.value)}>{profileChoices.map(item => <option key={item.directory} value={item.directory}>{item.name}</option>)}</select>}
-          <button disabled={busy} onClick={refreshTabs}>Refresh</button>
-          <span className="segmented" role="group" aria-label="Tab layout">
-            <button className={view === 'list' ? 'on' : ''} aria-pressed={view === 'list'} onClick={() => chooseView('list')}>List</button>
-            <button className={view === 'cards' ? 'on' : ''} aria-pressed={view === 'cards'} onClick={() => chooseView('cards')}>Cards</button>
-          </span>
-        </span>
-      </div>
-      {tabs.length > 6 && <input type="search" className="search" value={search} onChange={event => setSearch(event.target.value)} placeholder="Search tabs" aria-label="Search tabs" />}
-      <NoticeLine notice={notices.tabs} busy={busy} />
-      {view === 'cards' && sendPanel(false)}
-      {!visibleTabs.length ? <p className="empty">{tabs.length ? `No tabs match “${search}”.` : managed ? 'No tabs yet. Open the Abra browser, sign in, then refresh.' : 'No Chrome tabs found. Open Chrome with at least one tab, then refresh.'}</p>
-        : view === 'cards' ? <div className="tab-grid">{visibleTabs.map(tab => {
-          const open = selected?.id === tab.id;
-          return <button key={tab.id} className={`tab-card ${open ? 'selected' : ''}`} disabled={busy && !open} aria-pressed={open} onClick={() => open ? clearSelection() : inspect(tab)}>
-            <span className="preview">
-              {previews[tab.id] ? <img src={previews[tab.id]} alt="" /> : <Favicon host={tab.host} large />}
-              {tab.active && <span className="badge">Active</span>}
-            </span>
-            <span className="tab-card-text"><Favicon host={tab.host} /><span className="title">{tab.title || tab.host}</span></span>
-            <span className="meta">{displayHost(tab.host)}</span>
-          </button>;
-        })}</div>
-        : <ul className="rows">{visibleTabs.map(tab => {
-          const open = selected?.id === tab.id;
-          return <li key={tab.id}>
-            <button className={`row ${open ? 'selected' : ''}`} disabled={busy && !open} aria-expanded={open} onClick={() => open ? clearSelection() : inspect(tab)}>
-              <Favicon host={tab.host} /><span className="title">{tab.title || tab.host}</span>
-              {tab.active && <span className="dot online" title="Active tab" />}<span className="meta">{displayHost(tab.host)}</span>
-            </button>
-            {open && sendPanel(true)}
-          </li>;
-        })}</ul>}
-      {previewNote && <p className="muted">{previewNote}</p>}
-    </section>
 
     <section>
       <div className="section-head">
@@ -290,13 +278,40 @@ function Browser({ endpoint, profiles, initialTabs, connected, reload }: { endpo
         <span className="actions"><button className="primary" disabled={busy} onClick={() => pull('browser-accept', { id: item.id })}>Open here</button></span>
       </li>)}</ul>}
       {remoteOpen && (remoteTabs.length > 0 ? <ul className="rows">{remoteTabs.map(tab => <li key={tab.id} className="row static">
-        <Favicon host={tab.host} /><span className="title">{tab.title || tab.host}</span><span className="meta">{displayHost(tab.host)}</span>
+        <Favicon host={tab.host} icon={tab.favicon || tabs.find(item => item.host === tab.host && item.favicon)?.favicon} /><span className="title">{tab.title || tab.host}</span><span className="meta">{displayHost(tab.host)}</span>
         <span className="actions"><button disabled={busy || !connected} onClick={() => pull('browser-pull', { tab_id: tab.id })}>Pull here</button></span>
       </li>)}</ul>
         : !busy && connected && <p className="empty">No Chrome tabs open in the sandbox.</p>)}
       {remoteOpen && <p className="muted">Pulling copies the tab with its cookies and site storage. The original stays open in the sandbox. Agents can also push one with <code>abra-teleport browser send-tab &lt;tab-id&gt;</code>.</p>}
       <NoticeLine notice={notices.remote} busy={busy} />
     </section>
+
+    <section>
+      <div className="section-head">
+        <h2>Chrome tabs <span className="count">{tabCount}</span></h2>
+        <span className="actions">
+          {managed && <button disabled={busy} onClick={openAbraBrowser}>Open Abra browser</button>}
+          {!managed && profileChoices.length > 1 && <select value={profile} disabled={busy} aria-label="Chrome profile for cookies" onChange={event => chooseProfile(event.target.value)}>{profileChoices.map(item => <option key={item.directory} value={item.directory}>{item.name}</option>)}</select>}
+          <button disabled={busy} onClick={refreshTabs}>Refresh</button>
+        </span>
+      </div>
+      {tabs.length > 6 && <input type="search" disabled={busy} className="search" value={search} onChange={event => setSearch(event.target.value)} placeholder="Search tabs" aria-label="Search tabs" />}
+      <NoticeLine notice={notices.tabs} busy={busy} />
+      {selected && !visibleTabs.some(tab => tab.id === selected.id) && sendPanel()}
+      {!visibleTabs.length ? <p className="empty">{tabs.length ? `No tabs match “${search}”.` : managed ? 'No tabs yet. Open the Abra browser, sign in, then refresh.' : 'No Chrome tabs found. Open Chrome with at least one tab, then refresh.'}</p>
+        : <ul className="rows">{visibleTabs.map(tab => {
+          const open = selected?.id === tab.id;
+          return <li key={tab.id}>
+            <button className={`row ${open ? 'selected' : ''}`} disabled={busy} aria-expanded={open} title={tab.title || tab.url} onClick={() => open ? clearSelection() : inspect(tab)}>
+              <Favicon host={tab.host} icon={tab.favicon || tabs.find(item => item.host === tab.host && item.favicon)?.favicon} /><span className="title">{tab.title || tab.host}</span>
+              {tab.active && <span className="dot online" title="Active tab" />}<span className="meta">{displayHost(tab.host)}</span>
+            </button>
+            {open && sendPanel()}
+          </li>;
+        })}</ul>}
+    </section>
+
+
   </main>;
 }
 
@@ -346,7 +361,7 @@ export default function App() {
     </header>
     {error && <p className="notice error banner" role="alert">{error}<button className="link" onClick={() => setError('')}>Dismiss</button></p>}
     {!ready ? <p className="notice center"><span className="spinner" />Starting up…</p>
-      : endpoint ? <Browser key={endpoint.provider.id} endpoint={endpoint} profiles={profiles} initialTabs={tabs} connected={connected} reload={refreshTabs} />
+      : endpoint ? <Browser key={endpoint.provider.id} endpoint={endpoint} profiles={profiles} initialTabs={tabs} connected={connected} reload={refreshTabs} onAgentChanged={refresh} />
       : <main className="content narrow">
         <h2>Connect your agent</h2>
         <p className="muted">Abra moves a Chrome tab, with the cookies you choose, into the sandbox where your agent works. Bring it back when the agent is done.</p>

@@ -86,7 +86,7 @@ export function agentArguments(argv: unknown, agent: { controller: string }) {
   }
   if (group === 'browser' && action === 'receive') {
     if (!/^[0-9a-f]{64}$/.test(argv[2] || '')) throw new Error('Invalid browser handoff.');
-    return ['browser', 'receive', argv[2], '--from', agent.controller];
+    return ['browser', 'receive', argv[2], '--from', agent.controller, ...(argv.includes('--allow-non-portable') ? ['--allow-non-portable'] : [])];
   }
   if (group === 'browser' && ['down', 'revoke', 'close', 'status'].includes(action)) {
     const sessionIndex = argv.indexOf('--session');

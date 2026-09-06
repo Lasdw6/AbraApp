@@ -1,3 +1,4 @@
+import { cachedFavicons } from './favicon-cache.js';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { browserAdapterDirectory } from './abra.js';
@@ -20,34 +21,15 @@ export async function managedTabs(wsUrl?: string) {
   if (!wsUrl && !await chromeStatus()) return [];
   const { cdp } = await connect(wsUrl);
   try {
-    return (await cdp.send('Target.getTargets')).targetInfos
+    const tabs = (await cdp.send('Target.getTargets')).targetInfos
       .filter(target => target.type === 'page' && /^https?:\/\//.test(target.url))
       .map((target, index) => ({ id: target.targetId, title: target.title, url: target.url,
         host: new URL(target.url).hostname.toLowerCase(), windowIndex: 1, tabIndex: index + 1, active: false }));
+    const chrome = await chromeStatus();
+    const profiles = chrome?.profile && (!wsUrl || wsUrl === chrome.wsUrl) ? [path.join(chrome.profile, 'Default')] : [];
+    const icons = await cachedFavicons(tabs.map(tab => tab.url), profiles);
+    return tabs.map(tab => ({ ...tab, favicon: icons.get(tab.url) }));
   } finally { cdp.close(); }
-}
-
-// Screenshot every page target. Background tabs may not paint, so a missing preview is not an error.
-export async function managedPreviews(wsUrl?: string) {
-  if (!wsUrl && !await chromeStatus()) return {};
-  const { cdp, attachPage } = await connect(wsUrl);
-  const previews: Record<string, string> = {};
-  try {
-    const targets = (await cdp.send('Target.getTargets')).targetInfos.filter(target => target.type === 'page' && /^https?:\/\//.test(target.url));
-    for (const target of targets) {
-      let session;
-      try {
-        session = await attachPage(cdp, target.targetId);
-        const shot = await Promise.race([
-          cdp.send('Page.captureScreenshot', { format: 'jpeg', quality: 60 }, session),
-          new Promise<never>((_, reject) => setTimeout(() => reject(new Error('screenshot timed out')), 3000))
-        ]);
-        previews[target.targetId] = `data:image/jpeg;base64,${shot.data}`;
-      } catch { /* leave this tab without a preview */ }
-      finally { if (session) await cdp.send('Target.detachFromTarget', { sessionId: session }).catch(() => {}); }
-    }
-  } finally { cdp.close(); }
-  return previews;
 }
 
 // Read only the selected target. Other tabs may hold different session storage,

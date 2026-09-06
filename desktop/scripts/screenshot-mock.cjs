@@ -26,13 +26,7 @@ const inventory = {
       { key: '8', name: 'preferred_color_mode', domain: 'github.com', path: '/', httpOnly: false, secure: true, sameSite: null, session: false },
     ],
   }],
-  liveState: { available: true, scroll: { x: 0, y: 840, historyLength: 4 }, media: null },
 };
-// Stand-in for a window capture: a page-like SVG with a header bar and text lines.
-function fakePage(bg, accent, heading) {
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="640" height="400"><rect width="640" height="400" fill="${bg}"/><rect width="640" height="48" fill="${accent}" opacity=".9"/><text x="24" y="100" font-family="sans-serif" font-size="26" fill="#fff">${heading}</text>${[140, 170, 200, 230, 260].map(y => `<rect x="24" y="${y}" width="${380 + (y % 90)}" height="12" rx="4" fill="#fff" opacity=".25"/>`).join('')}</svg>`;
-  return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
-}
 const agent = { id: 'a1b2c3d4e5f6', peer_id: 'p', capsule_id: 'c', name: 'daytona-sandbox', platform: 'linux' };
 const cloudStatus = ['cloud', 'offline', 'multi'].includes(scenario) ? { active: { browser: { id: 'A'.repeat(32), url: tabs[0].url, title: tabs[0].title, cookie_count: 8, include_storage: true } } } : { active: {} };
 
@@ -58,7 +52,6 @@ contextBridge.exposeInMainWorld('abra', {
     if (args[1] === 'tabs') return JSON.stringify(tabs);
     if (args[1] === 'profiles') return JSON.stringify(profiles);
     if (args[1] === 'cookie-inventory') return JSON.stringify(inventory);
-    if (args[1] === 'tab-previews') return JSON.stringify({ previews: { t1: fakePage('#0d1117', '#c9d1d9', 'Pull requests'), t4: fakePage('#0f0f0f', '#ff0033', 'Building a Rust CLI') } });
     return 'null';
   },
 });

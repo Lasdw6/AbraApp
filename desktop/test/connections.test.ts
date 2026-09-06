@@ -20,7 +20,15 @@ if (args[0] === 'setup') {
  }, 100);
 } else {
  if(!fs.existsSync(path.join(home,'ready'))) { console.error('request raced setup'); process.exit(1); }
- console.log(args[1] === 'list' ? '[]' : '{}');
+ if(args[1] === 'list') console.log(JSON.stringify([{id:'first',name:'First'},{id:'second',name:'Second'}]));
+ else if(args[0] === 'sandbox') {
+   let data=''; process.stdin.on('data', chunk => data+=chunk);
+   process.stdin.on('end', () => {
+     const request=JSON.parse(data);
+     if(request.payload.fail) { console.error('sandbox unavailable'); process.exit(1); }
+     console.log(JSON.stringify(request));
+   });
+ } else console.log('{}');
 }
 `);
   const connections = createConnections({ home, runtime: () => ({ node: process.execPath, wrapper: home, abra: '/unused', adapter: '/unused', observer: '/unused' }) });
@@ -46,5 +54,65 @@ test('failed setup can be retried without releasing waiting requests early', asy
     assert.deepEqual(await f.calls(), ['setup']);
     await f.connections.list();
     assert.deepEqual(await f.calls(), ['setup', 'setup', 'agent list']);
+  } finally { await rm(f.home, { recursive: true, force: true }); }
+});
+
+// Destination selection and the send share one queue, so the header cannot redirect a handoff.
+test('send uses the chosen paired agent and retains it for subsequent status requests', async () => {
+  const f = await fixture();
+  try {
+    await f.connections.select('first');
+    const result = await f.connections.command('browser-up', { url: 'https://example.com' }, 'second');
+    assert.equal(result.config.id, 'second');
+    assert.equal((await f.connections.config())?.id, 'second');
+    assert.equal((await f.connections.command('status')).config.id, 'second');
+    await assert.rejects(f.connections.command('browser-up', {}, 'unknown'), /has not connected/);
+    assert.equal((await f.connections.config())?.id, 'second');
+  } finally { await rm(f.home, { recursive: true, force: true }); }
+});
+
+test('failed sends preserve the current agent and active handoffs prevent switching', async () => {
+  const f = await fixture();
+  try {
+    await f.connections.select('first');
+    await assert.rejects(f.connections.command('browser-up', { fail: true }, 'second'), /sandbox unavailable/);
+    assert.equal((await f.connections.config())?.id, 'first');
+    await writeFile(path.join(f.home, '.abra-teleport/handoff.json'), JSON.stringify({ agent: 'first', browsers: [{ id: 'session' }] }));
+    await assert.rejects(f.connections.command('browser-up', {}, 'second'), /active handoff/);
+    assert.equal((await f.connections.config())?.id, 'first');
+    assert.equal((await f.connections.command('browser-up', {}, 'first')).config.id, 'first');
+  } finally { await rm(f.home, { recursive: true, force: true }); }
+});
+
+test('agent names persist across restarts, discovery, selection, and handoffs', async () => {
+  const f = await fixture();
+  try {
+    await f.connections.select('first');
+    const before = await f.connections.config();
+    await Promise.all([f.connections.rename('first', '  Research  '), f.connections.rename('second', 'Writing')]);
+    assert.deepEqual(await f.connections.config(), { ...before, name: 'Research' });
+    assert.deepEqual((await f.connections.list()).map(agent => agent.name), ['Research', 'Writing']);
+    const restarted = createConnections({ home: f.home, runtime: () => ({ node: process.execPath, wrapper: f.home, abra: '/unused', adapter: '/unused', observer: '/unused', asNode: false }) });
+    assert.equal((await restarted.config())?.name, 'Research');
+    assert.equal((await restarted.select('second')).name, 'Writing');
+    assert.equal((await restarted.command('browser-up', {}, 'first')).config.name, 'Research');
+    await writeFile(path.join(f.home, '.abra-teleport/handoff.json'), JSON.stringify({ agent: 'first', browsers: [{ id: 'session' }] }));
+    await restarted.rename('first', 'Research team');
+    assert.equal((await restarted.config())?.name, 'Research team');
+    assert.equal(JSON.parse(await readFile(path.join(f.home, '.abra-teleport/handoff.json'), 'utf8')).agent, 'first');
+  } finally { await rm(f.home, { recursive: true, force: true }); }
+});
+
+test('renaming rejects invalid names and unknown agents without changing saved names', async () => {
+  const f = await fixture();
+  try {
+    await f.connections.select('first');
+    for (const name of ['', '   ', 'x'.repeat(81), 'line\nbreak', null]) {
+      await assert.rejects(f.connections.rename('first', name as string), /1 and 80/);
+    }
+    await assert.rejects(f.connections.rename('unknown', 'Name'), /has not connected/);
+    assert.equal((await f.connections.config())?.name, 'First');
+    await f.connections.rename('first', 'Cursor');
+    assert.equal((await f.connections.config())?.name, 'Cursor');
   } finally { await rm(f.home, { recursive: true, force: true }); }
 });

@@ -36,10 +36,10 @@ export async function sandboxCommand(action: string, config: AgentDescriptor, pa
       await save();
     }
   };
-  const receive = async id => {
+  const receive = async (id, allowNonPortable = false) => {
     if (!/^[a-f0-9]{64}$/.test(id || '')) throw new Error('Invalid incoming browser handoff.');
     const existing = browserSessions((await loadState()).browser).find(item => item.received_snapshot_id === id && item.from === config.peer_id);
-    if (!existing) await browserReceive(id, { from: config.peer_id, headless: payload.headless === true });
+    if (!existing) await browserReceive(id, { from: config.peer_id, headless: payload.headless === true, 'allow-non-portable': allowNonPortable });
   };
   if (action === 'status') return { active: active() };
   if (action === 'connect') return { ...await json(['doctor'], 8000), active: active() };
@@ -60,15 +60,17 @@ export async function sandboxCommand(action: string, config: AgentDescriptor, pa
   }
   if (action === 'browser-up') {
     const remote = await status();
+    const allowNonPortable = payload['allow-non-portable'] === true;
+    if (allowNonPortable && remote.manual_cookie_override !== true) throw new Error('Update the agent CLI to use the manual override.');
     await migrate(remote);
     if (browsers.length && !remote.multiple_sessions) throw new Error('Update the agent CLI to send additional tabs. The existing session is still active.');
     const prepared = await browserPrepare(payload);
     const context = (await loadState()).browser.active_context_id;
     try {
       const sent = await browserSend(config.peer_id, { 'all-domains': true, session: context });
-      const received = await json(['browser', 'receive', sent.snapshot_id]);
+      const received = await json(['browser', 'receive', sent.snapshot_id, ...(allowNonPortable ? ['--allow-non-portable'] : [])]);
       const session = { id: received.browser_context_id, url: payload.url, title: payload.title,
-        cookie_count: prepared.cookie_count, include_storage: payload['no-storage'] !== true };
+        allow_non_portable: allowNonPortable, cookie_count: prepared.cookie_count, include_storage: payload['no-storage'] !== true };
       browsers.push(session); await save();
       return { ...prepared, transferred: true, session };
     } finally {
@@ -93,7 +95,7 @@ export async function sandboxCommand(action: string, config: AgentDescriptor, pa
       if (!exists) throw new Error('The sandbox session is no longer available to return.');
       const local = await ensureDaemon();
       const sent = await json(['browser', 'down', local.peer_id, '--all-domains', ...args]);
-      await receive(sent.snapshot_id);
+      await receive(sent.snapshot_id, selected?.allow_non_portable === true);
     }
     const revoked = exists ? await json(['browser', 'revoke', ...args], 20000) : { revoked: true, already_revoked: true };
     let cleanup_warning;

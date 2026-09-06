@@ -49,7 +49,8 @@ export interface TeleportBridge {
   connectionHealth(): Promise<ConnectionHealth>;
   agentList(): Promise<AgentDescriptor[]>;
   agentSelect(id: string): Promise<AgentDescriptor>;
-  sandbox<K extends keyof SandboxResponses>(action: K, payload?: Record<string, unknown>): Promise<SandboxResponses[K]>;
+  agentRename(id: string, name: string): Promise<AgentDescriptor>;
+  sandbox<K extends keyof SandboxResponses>(action: K, payload?: Record<string, unknown>, agentId?: string): Promise<SandboxResponses[K]>;
   local(args: string[]): Promise<string>;
 
 }

@@ -18,6 +18,7 @@ test('agent rejects arbitrary commands and pins browser destinations', () => {
   }
   const browser = agentArguments(['browser', 'receive', 'b'.repeat(64), '--from', 'attacker', '--headed'], agent);
   assert.deepEqual(browser.slice(-2), ['--from', agent.controller]);
+  assert.deepEqual(agentArguments(['browser', 'receive', 'b'.repeat(64), '--allow-non-portable', '--from', 'attacker'], agent), ['browser', 'receive', 'b'.repeat(64), '--from', agent.controller, '--allow-non-portable']);
   assert.throws(() => agentArguments(['codex', 'run', 'task'], agent));
   assert.throws(() => agentArguments(['monitor', 'report'], agent));
   assert.deepEqual(agentArguments(['browser', 'down', 'attacker', '--session', 'B'.repeat(32)], agent), ['browser', 'down', agent.controller, '--all-domains', '--session', 'B'.repeat(32)]);

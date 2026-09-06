@@ -3,7 +3,31 @@ import type { ConnectionHealth } from '../shared/contracts';
 
 function message(error: unknown) { return error instanceof Error ? error.message : String(error); }
 
-// Three-step pairing flow. Used inside the header popover and on the first-run screen.
+function AgentName({ agent, onRenamed }: { agent: ProviderConfig; onRenamed: () => Promise<void> }) {
+  const [editing, setEditing] = useState(false);
+  const [name, setName] = useState(agent.name);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  const cancel = () => { setEditing(false); setError(''); };
+  const save = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (saving) return;
+    setSaving(true); setError('');
+    try { await window.abra!.agentRename(agent.id, name); await onRenamed(); setEditing(false); }
+    catch (error) { setError(message(error)); }
+    finally { setSaving(false); }
+  };
+  return <div className="agent-name">
+    {editing ? <form onSubmit={save} onKeyDown={event => { if (event.key === 'Escape') { event.stopPropagation(); if (!saving) cancel(); } }}>
+      <input aria-label="Agent name" autoFocus maxLength={80} value={name} disabled={saving} onChange={event => setName(event.target.value)} />
+      <button type="submit" disabled={saving || !name.trim()}>{saving ? 'Saving…' : 'Save'}</button>
+      <button type="button" className="link" disabled={saving} onClick={cancel}>Cancel</button>
+    </form> : <div><strong>{agent.name}</strong><button className="link" aria-label={`Rename ${agent.name}`} onClick={() => { setName(agent.name); setEditing(true); }}>Rename</button></div>}
+    {error && <p className="notice error" role="alert">{error}</p>}
+  </div>;
+}
+
+// Shared by the agent menu and first-run screen.
 export function PairingForm({ onConnected, current }: { onConnected: () => Promise<void>; current: ProviderConfig | null }) {
   const [agents, setAgents] = useState<ProviderConfig[] | null>(null);
   const [command, setCommand] = useState('');
@@ -36,29 +60,21 @@ export function PairingForm({ onConnected, current }: { onConnected: () => Promi
   };
 
   return <div className="pairing">
-    <ol className="steps">
-      <li>
-        <div className="step-text"><strong>Create a connection command</strong><span>It installs the CLI in the sandbox if needed and pairs it with this computer. It expires in 10 minutes.</span></div>
-        {!command && <button className="primary" disabled={Boolean(busy)} onClick={generate}>{busy === 'command' ? 'Creating…' : 'Create command'}</button>}
-        {command && <div className="command"><code>{command}</code><span className="actions"><button onClick={copy}>{copied ? 'Copied' : 'Copy'}</button><button className="link" disabled={Boolean(busy)} onClick={generate}>New command</button></span></div>}
-      </li>
-      <li>
-        <div className="step-text"><strong>Paste it into the agent’s terminal</strong><span>The sandbox needs outbound access to Abra’s network. If it cannot download the CLI, <button className="link" disabled={Boolean(busy)} onClick={saveInstaller}>save the installer</button> and hand it over instead.</span></div>
-      </li>
-      <li>
-        <div className="step-text"><strong>Pick the paired agent</strong></div>
-        <button disabled={Boolean(busy)} onClick={find}>{busy === 'find' ? 'Looking…' : agents ? 'Look again' : 'Find agents'}</button>
-        {agents && agents.length > 0 && <ul className="rows">{agents.map(agent => {
-          const active = agent.id === current?.id;
-          return <li key={agent.id} className="row static">
-            <span className={`dot ${active ? 'online' : 'idle'}`} /><span className="title">{agent.name}</span><span className="meta mono">{agent.platform} · {agent.id.slice(0, 8)}</span>
-            <span className="actions">{active ? <span className="meta">In use</span> : <button disabled={Boolean(busy)} onClick={() => choose(agent.id)}>Use</button>}</span>
-          </li>;
-        })}</ul>}
-      </li>
-    </ol>
+    <p className="muted">Paste this command into your agent’s terminal.</p>
+    {!command && <button className="primary" disabled={Boolean(busy)} onClick={generate}>{busy === 'command' ? 'Creating…' : 'Create command'}</button>}
+    {command && <>
+      <div className="command"><code>{command}</code></div>
+      <div className="pairing-actions"><button className="primary" onClick={copy}>{copied ? 'Copied' : 'Copy command'}</button><button className="link" disabled={Boolean(busy)} onClick={generate}>{busy === 'command' ? 'Creating…' : 'New code'}</button><span className="meta">One use · 10 min</span></div>
+    </>}
+    <div className="actions"><button className="link" disabled={Boolean(busy)} onClick={find}>{busy === 'find' ? 'Looking…' : 'Find agents'}</button><button className="link" disabled={Boolean(busy)} onClick={saveInstaller}>Download CLI</button></div>
+    {agents && agents.length > 0 && <ul className="rows">{agents.map(agent => {
+      const active = agent.id === current?.id;
+      return <li key={agent.id} className="row static">
+        <span className={`dot ${active ? 'online' : 'idle'}`} /><AgentName agent={agent} onRenamed={async () => { setAgents(await window.abra!.agentList()); await onConnected(); }} />
+        <span className="actions">{active ? <span className="meta">In use</span> : <button disabled={Boolean(busy)} onClick={() => choose(agent.id)}>Use</button>}</span>
+      </li>;
+    })}</ul>}
     {status && <p role="status" className={status.tone === 'error' ? 'notice error' : 'notice'}>{status.text}</p>}
-    <p className="muted">Only connect an agent you trust. Pairing makes it one of your Abra devices. This computer must stay online during handoffs.</p>
   </div>;
 }
 
@@ -90,16 +106,16 @@ export default function AgentMenu({ agent, health, checking, refresh, onConnecte
     </button>
     {open && <div className="popover" role="dialog" aria-label="Agent connection">
       {agent && <div className="agent-detail">
-        <div><strong>{agent.name}</strong><span className="meta mono">{agent.platform} · {agent.id.slice(0, 8)}</span></div>
+        <AgentName key={agent.id} agent={agent} onRenamed={onConnected} />
         <div className="agent-health">
           <span className={`dot ${state}`} />
-          <span>{statusLabel(health, agent)}{health?.last_seen ? ` · last reached ${new Date(health.last_seen).toLocaleTimeString()}` : ''}</span>
-          <button className="link" disabled={checking} onClick={refresh}>{checking ? 'Checking…' : 'Check now'}</button>
+          <span>{statusLabel(health, agent)}</span>
+          <button className="link" disabled={checking} onClick={refresh}>{checking ? 'Checking…' : 'Refresh'}</button>
         </div>
         {health?.status === 'unreachable' && <p className="notice error">Could not reach the sandbox. Check that it is running and that Abra is installed there.{health.error ? ` ${health.error}` : ''}</p>}
       </div>}
       {agent && !pairing
-        ? <button className="link" onClick={() => setPairing(true)}>Connect a different agent</button>
+        ? <button className="link" onClick={() => setPairing(true)}>Connect another agent</button>
         : <PairingForm current={agent} onConnected={async () => { await onConnected(); setOpen(false); }} />}
     </div>}
   </div>;

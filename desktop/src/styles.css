@@ -51,18 +51,13 @@ input[type="checkbox"] { margin: 0; accent-color: var(--accent); }
 .bar { flex: 0 0 44px; display: flex; align-items: center; justify-content: space-between; padding: 0 16px; border-bottom: 1px solid var(--line); -webkit-app-region: drag; }
 .mac .bar { padding-left: 84px; }
 .bar-title { font-weight: 600; }
-.content { flex: 1; min-height: 0; overflow: auto; width: 100%; max-width: 860px; margin: 0 auto; padding: 4px 20px 32px; }
+.content { flex: 1; min-height: 0; overflow: auto; width: 100%; max-width: 1080px; margin: 0 auto; padding: 4px 20px 32px; }
 .content.narrow { max-width: 560px; padding-top: 28px; display: flex; flex-direction: column; gap: 12px; }
 section { padding: 14px 0; border-bottom: 1px solid var(--line); }
 section:last-child { border-bottom: 0; }
 .section-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 26px; margin-bottom: 4px; }
 .actions { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; }
 .search { width: 100%; margin: 4px 0 6px; }
-.segmented { display: inline-flex; border: 1px solid var(--line); border-radius: 5px; overflow: hidden; }
-.segmented button { border: 0; border-radius: 0; padding: 3px 9px; }
-.segmented button + button { border-left: 1px solid var(--line); }
-.segmented button.on { background: var(--hover); font-weight: 600; }
-
 /* Rows: one line per tab, session, or agent */
 .rows { list-style: none; padding: 0; }
 .row { display: flex; align-items: center; gap: 10px; width: calc(100% + 16px); margin: 0 -8px; padding: 6px 8px; min-height: 32px; border: 0; border-radius: 5px; background: none; text-align: left; white-space: normal; }
@@ -72,29 +67,14 @@ section:last-child { border-bottom: 0; }
 .row .title { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .row .meta { flex: 0 1 auto; max-width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .icon { flex: 0 0 16px; width: 16px; height: 16px; }
-.favicon { display: block; width: 100%; height: 100%; padding: 1px; border-radius: 3px; background: #fff; object-fit: contain; }
+.favicon { display: block; width: 100%; height: 100%; padding: 1px; border-radius: 3px; object-fit: contain; }
 .favicon.fallback { display: grid; place-items: center; background: var(--hover); color: var(--muted); font-size: 10px; font-weight: 600; }
-.icon.large { width: 32px; height: 32px; }
-.icon.large .favicon { padding: 3px; border-radius: 6px; }
-.icon.large .favicon.fallback { font-size: 16px; }
 
-/* Tab cards: a capture of the tab when Chrome is showing it, otherwise the site icon */
-.tab-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 10px; padding: 4px 0; }
-.tab-card { display: flex; flex-direction: column; gap: 4px; padding: 6px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); text-align: left; white-space: normal; }
-.tab-card:hover:not(:disabled) { background: var(--hover); }
-.tab-card.selected { border-color: var(--accent); background: var(--selected); }
-.preview { position: relative; display: grid; place-items: center; aspect-ratio: 16 / 10; border-radius: 4px; background: var(--hover); overflow: hidden; }
-.preview img { width: 100%; height: 100%; object-fit: cover; object-position: top; }
-.badge { position: absolute; top: 5px; left: 5px; padding: 1px 6px; border-radius: 999px; background: var(--ok); color: #fff; font-size: 10px; font-weight: 600; }
-.tab-card-text { display: flex; align-items: center; gap: 6px; min-width: 0; padding-top: 2px; }
-.tab-card .title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.tab-card .meta { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-
-/* Send panel, shown above the grid for the selected tab */
-.send { margin: 6px 0 10px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 6px; display: flex; flex-direction: column; gap: 8px; }
-.send.inline { margin: 2px 0 8px 8px; padding: 8px 0 8px 14px; border: 0; border-left: 2px solid var(--line); border-radius: 0; }
-.send-head { display: flex; align-items: center; gap: 8px; min-width: 0; }
-.send-head .title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+/* The selected row expands into a destination picker and cookie controls. */
+.send { scroll-margin-block: 16px; display: flex; flex-direction: column; gap: 10px; }
+.send.inline { margin: 8px 0 16px 8px; padding: 4px 0 8px 14px; border-left: 2px solid var(--line); }
+.send-destination { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
+.send-destination select { min-width: 180px; max-width: 100%; }
 .send-summary { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .send-edit { display: flex; flex-direction: column; gap: 8px; }
 .send-edit-head { display: flex; align-items: center; justify-content: space-between; }
@@ -117,14 +97,43 @@ section:last-child { border-bottom: 0; }
 .agent-health .link { margin-left: auto; }
 .popover > .link { align-self: flex-start; }
 
-/* Pairing steps */
+/* Pairing command */
 .pairing { display: flex; flex-direction: column; gap: 12px; }
-.steps { padding-left: 20px; display: flex; flex-direction: column; gap: 12px; }
-.steps li > * + * { margin-top: 6px; }
-.steps li > button { display: inline-block; }
-.steps li::marker { color: var(--muted); }
-.step-text { display: flex; flex-direction: column; gap: 2px; }
-.step-text span { color: var(--muted); }
-.command { width: 100%; display: flex; flex-direction: column; gap: 6px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 5px; background: var(--hover); }
+.pairing > .primary { align-self: flex-start; }
+.pairing-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; }
+.pairing-actions .meta { margin-left: auto; }
+.command { width: 100%; padding: 8px 10px; border: 1px solid var(--line); border-radius: 5px; background: var(--hover); }
 .command code { line-height: 1.5; overflow-wrap: anywhere; user-select: all; }
-.steps .rows { width: 100%; }
+
+/* Keep controls usable when the window or a long agent name takes up space. */
+.notice { overflow-wrap: anywhere; min-width: 0; }
+.notice.banner > .link { flex-shrink: 0; }
+.send-summary > span { min-width: 0; overflow-wrap: anywhere; }
+.send-actions { flex-wrap: wrap; }
+.send-actions .primary { white-space: normal; overflow-wrap: anywhere; }
+.popover { width: min(440px, calc(100vw - 32px)); }
+@media (max-width: 760px) {
+  .content { padding-inline: 16px; }
+  .section-head { flex-wrap: wrap; }
+  .section-head > .actions { flex-wrap: wrap; }
+  .row.static { flex-wrap: wrap; }
+  .row.static .title { flex-basis: calc(100% - 30px); }
+  .row.static .meta { max-width: none; flex: 1; }
+  .agent-pill-name { max-width: 120px; }
+}
+
+.cookie-details { display: flex; flex-direction: column; gap: 3px; min-width: 0; flex: 1; }
+.cookie-heading { display: flex; align-items: baseline; gap: 8px; min-width: 0; flex-wrap: wrap; }
+.cookie-status { font-size: 12px; color: var(--muted); }
+.cookie-status.possible { color: var(--warn); }
+.cookie-reason { color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
+.cookies label { align-items: flex-start; padding: 9px 10px; }
+.cookies input { margin-top: 3px; }
+
+.agent-name { flex: 1; min-width: 0; }
+.agent-name > div, .agent-name form { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.agent-name strong { overflow-wrap: anywhere; min-width: 0; }
+.agent-name input { flex: 1; min-width: 100px; width: 100%; }
+.agent-name > div > .link { margin-left: auto; }
+
+.override { display: flex; flex-direction: column; gap: 4px; }

@@ -40,7 +40,8 @@ ipcMain.handle('abra:export-installer', async () => {
 ipcMain.handle('abra:connection-health', () => connections.health());
 ipcMain.handle('abra:agent-list', () => connections.list());
 ipcMain.handle('abra:agent-select', (_event, id) => connections.select(id));
-ipcMain.handle('abra:sandbox', (_event, action, payload) => connections.command(action, payload));
+ipcMain.handle('abra:agent-rename', (_event, id, name) => connections.rename(id, name));
+ipcMain.handle('abra:sandbox', (_event, action, payload, agentId) => connections.command(action, payload, agentId));
 
 function validateArgs(args: unknown): string[] {
   if (!Array.isArray(args) || args.some(value => typeof value !== 'string' || value.length > 100000)) {
