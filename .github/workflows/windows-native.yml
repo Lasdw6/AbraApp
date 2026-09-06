@@ -34,6 +34,12 @@ jobs:
       - run: npm ci
       - run: npm run check
       - run: ${{ matrix.command }}
+      - uses: actions/upload-artifact@v4
+        if: runner.os == 'Windows'
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.file }}
+          if-no-files-found: error
       - name: Check the Windows installer
         if: runner.os == 'Windows'
         shell: pwsh
@@ -44,8 +50,8 @@ jobs:
           if ($process.ExitCode -ne 0) { throw "Installer exited with $($process.ExitCode)" }
           if (!(Test-Path (Join-Path $destination 'Abra Teleport.exe'))) { throw 'Installed app is missing' }
           $env:ELECTRON_RUN_AS_NODE = '1'
-          & (Join-Path $destination 'Abra Teleport.exe') -e "console.log(process.versions.node)"
-          if ($LASTEXITCODE -ne 0) { throw 'Installed Node runtime did not start' }
+          $runtime = Start-Process -FilePath (Join-Path $destination 'Abra Teleport.exe') -ArgumentList '-e "console.log(process.versions.node)"' -Wait -PassThru -NoNewWindow
+          if ($runtime.ExitCode -ne 0) { throw "Installed Node runtime exited with $($runtime.ExitCode)" }
           & (Join-Path $destination 'resources/Runtime/abra.exe') --version
           if ($LASTEXITCODE -ne 0) { throw 'Installed Abra runtime did not start' }
           $core = Join-Path $destination 'resources/Runtime/abra.exe'
@@ -66,6 +72,7 @@ jobs:
           "$app/Contents/Resources/Runtime/abra" --version
           ditto -c -k --sequesterRsrc --keepParent "$app" desktop/dist/Abra-Teleport-mac-arm64.zip
       - uses: actions/upload-artifact@v4
+        if: runner.os == 'macOS'
         with:
           name: ${{ matrix.artifact }}
           path: ${{ matrix.file }}
