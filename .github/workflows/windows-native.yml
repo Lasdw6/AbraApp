@@ -27,5 +27,9 @@ jobs:
           $process = Start-Process -FilePath $installer.FullName -ArgumentList "/S /D=$destination" -Wait -PassThru
           if ($process.ExitCode -ne 0) { throw "Installer exited with $($process.ExitCode)" }
           "ABRA_INSTALL_DIR=$destination" >> $env:GITHUB_ENV
-      - name: Diagnose installed runtime
-        run: node scripts/diagnose-installed.cjs
+      - name: Probe handle inheritance
+        shell: pwsh
+        run: |
+          rustc scripts/handle-probe.rs -o scripts/handle-probe.exe
+          node -e 'const {spawnSync}=require("node:child_process"); for(const mode of ["plain","hidden","clear"]) { const start=Date.now();const r=spawnSync("scripts/handle-probe.exe",[mode],{encoding:"utf8",timeout:3000});console.log({mode,ms:Date.now()-start,status:r.status,error:r.error?.message,stdout:r.stdout}); }'
+
