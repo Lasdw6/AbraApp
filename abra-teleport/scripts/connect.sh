@@ -10,7 +10,9 @@ fi
 REQUIRED_HELP='agent connect'
 [[ "$TICKET" == ABRA-* ]] && REQUIRED_HELP='ticket-or-code'
 [[ "$TICKET" =~ ^ABRA-[A-Z2-7]{8}$ ]] && REQUIRED_HELP='8-character pairing codes'
-if [[ -z "$CLI" ]] || ! "$CLI" --help | grep -q "$REQUIRED_HELP"; then
+CLI_HELP=""
+if [[ -n "$CLI" ]]; then CLI_HELP="$("$CLI" --help 2>/dev/null || true)"; fi
+if [[ "$CLI_HELP" != *"$REQUIRED_HELP"* || "$CLI_HELP" != *'abra-teleport skill'* ]]; then
   ARCHIVE_URL='@ARCHIVE_URL@'
   EXPECTED='@ARCHIVE_SHA256@'
   [[ "$ARCHIVE_URL" == https://* && "$EXPECTED" =~ ^[a-f0-9]{64}$ ]] || { echo 'This installer has not been packaged for download.' >&2; exit 1; }

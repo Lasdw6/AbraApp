@@ -6,7 +6,7 @@ INSTALL="${ABRA_TELEPORT_INSTALL:-$HOME/.local/share/abra-teleport-cli}"
 BIN_DIR="${ABRA_TELEPORT_BIN_DIR:-$HOME/.local/bin}"
 mkdir -p "$INSTALL" "$BIN_DIR"
 if [[ "$SOURCE" != "$INSTALL" ]]; then
-  for item in bin src adapters scripts runtime package.json; do cp -R "$SOURCE/$item" "$INSTALL/"; done
+  for item in bin src adapters scripts skills runtime package.json; do cp -R "$SOURCE/$item" "$INSTALL/"; done
 fi
 # Retire files from older releases; user state lives outside this install directory.
 rm -rf "$INSTALL/adapters/codex-session"
@@ -49,5 +49,9 @@ chmod +x "$BINARY" "$INSTALL/bin/abra-teleport.js" "$INSTALL/adapters/teleport-a
 NODE_DIR="$(dirname "$NODE")"
 printf '#!/usr/bin/env bash\nexport PATH=%q:"$PATH"\nexec %q %q "$@"\n' "$NODE_DIR" "$NODE" "$INSTALL/bin/abra-teleport.js" > "$BIN_DIR/abra-teleport"
 chmod +x "$BIN_DIR/abra-teleport"
+if ! "$BIN_DIR/abra-teleport" skill install; then
+  echo 'Skill installation was skipped. Read it with: abra-teleport skill' >&2
+fi
 echo 'Installed. Add $HOME/.local/bin to PATH, then run the pairing command from Teleport.'
 echo 'Browser handoffs require Chrome/Chromium.'
+echo 'Agent instructions: abra-teleport skill'

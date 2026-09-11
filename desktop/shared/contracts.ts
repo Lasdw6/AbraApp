@@ -32,7 +32,7 @@ export interface SandboxResponses {
   } };
   'browser-frame': { title: string; url: string; image: string; githubSignedIn?: boolean | null; vercelSignedIn?: boolean | null };
   'browser-up': { transferred: boolean; cookie_count: number; omitted_cookie_count: number; session: BrowserSession };
-  'browser-tabs': { tabs: Array<{ id: string; title: string; url: string; host: string }> };
+  'browser-tabs': { tabs: Array<{ id: string; title: string; url: string; host: string; source?: unknown }> };
   'browser-incoming': { incoming: Array<{ id: string; received_at: string }> };
   'browser-accept': { returned: boolean };
   'browser-pull': { returned: boolean };
@@ -50,7 +50,9 @@ export interface TeleportBridge {
   agentList(): Promise<AgentDescriptor[]>;
   agentSelect(id: string): Promise<AgentDescriptor>;
   agentRename(id: string, name: string): Promise<AgentDescriptor>;
+  agentRemove(id: string): Promise<void>;
   sandbox<K extends keyof SandboxResponses>(action: K, payload?: Record<string, unknown>, agentId?: string): Promise<SandboxResponses[K]>;
   local(args: string[]): Promise<string>;
+  onIncoming(callback: (message: string) => void): () => void;
 
 }

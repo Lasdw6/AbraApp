@@ -34,6 +34,28 @@ The browser integration test now sends two independent sessions, rejects ambiguo
 
 Electron mock renders covered the multiple-session navigation and sandbox tab screen, including incoming tabs. The installed Mac app was updated and verified connected with the existing X handoff preserved; Send another tab reopened the picker without ending that handoff. Type checks and the Mac and Windows/WSL builds passed. Grokbot’s installed CLI was then updated to preview 2. A live read-only check confirmed multiple-session support, preserved the active handoff, and listed two tabs across two sandbox Chrome instances. The new pull/send flows have integration coverage but have not been exercised against those personal live tabs. The Windows package still needs first-run testing on Windows.
 
+## Sandbox tabs through the adapter inventory: passed (September 11, 2026)
+
+Sandbox tab listing now calls `abra-teleport inventory` on the agent. That runs
+`abra inventory --adapter dev.abra.browser-session` and passes the browsers the
+sandbox already has (its attached or owned Chrome, the configured endpoint, and
+any found on the agent's desktop) as the adapter's `cdp_urls` option. The
+adapter lists their tabs itself and marks them transferable. Pulling one sends
+the item's `source` object unchanged, so the agent no longer captures a separate
+local selection first. An agent whose CLI, Abra build, or adapter lacks the
+inventory verb falls back to `browser available-tabs` and the old
+`send-tab <target-id>` path.
+
+The local browser integration suite ran against Abra core `20c818a` with real
+Chrome and two isolated daemons. The handoff test listed the provider tab
+through the inventory, pulled it, received a tab sent by the agent CLI, and
+preserved the original provider tab and cookies. 35 of 38 CLI tests passed with
+two Windows tests skipped. The one failure, the manual cookie override round
+trip, predates this work: the browser adapter reports
+`supportsManualCookieOverride` as false, so the CLI refuses the override. No
+remote sandbox was available for this pass, so the flow has not run against a
+Linux agent yet.
+
 ## Linux Chrome startup follow-up
 
 The Linux CI integration run failed on the initial Chrome debugging request before any transfer. Chrome had written its port file but the endpoint timed out. Preview 3 waits for the newly launched endpoint to become ready, with a regression test for delayed readiness and process exit. All 15 CLI tests and two desktop tests then passed locally, including browser integration; type checks and both package builds also passed.

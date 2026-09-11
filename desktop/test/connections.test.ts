@@ -88,6 +88,20 @@ test('send uses the chosen paired agent and retains it for subsequent status req
   } finally { await rm(f.home, { recursive: true, force: true }); }
 });
 
+// Sandbox tab listing goes through the agent, which reads its adapter inventory.
+test('sandbox tab listing is forwarded to the selected agent only', async () => {
+  const f = await fixture();
+  try {
+    await f.connections.select('first');
+    const result = await f.connections.command('browser-tabs');
+    assert.equal(result.config.id, 'first');
+    assert.deepEqual(result.payload, {});
+    assert.ok((await f.calls()).includes('sandbox browser-tabs'));
+    await assert.rejects(f.connections.command('browser-tabs', {}, 'second'), /Choose a valid agent/);
+    assert.equal((await f.connections.config())?.id, 'first');
+  } finally { await rm(f.home, { recursive: true, force: true }); }
+});
+
 test('failed sends preserve the current agent and active handoffs prevent switching', async () => {
   const f = await fixture();
   try {
@@ -131,5 +145,41 @@ test('renaming rejects invalid names and unknown agents without changing saved n
     assert.equal((await f.connections.config())?.name, 'First');
     await f.connections.rename('first', 'Cursor');
     assert.equal((await f.connections.config())?.name, 'Cursor');
+  } finally { await rm(f.home, { recursive: true, force: true }); }
+});
+
+test('removal revokes access before clearing the selection and preserves it on failure', async () => {
+  const f = await fixture();
+  const run = f.teleport.run.bind(f.teleport);
+  let fail = true;
+  f.teleport.run = async <T>(args: string[], request?: unknown, timeout?: number): Promise<T> => {
+    if (args[0] === 'agent' && args[1] === 'remove') {
+      assert.equal((await f.connections.config())?.id, 'first');
+      if (fail) throw new Error('revocation failed');
+    }
+    return run<T>(args, request, timeout);
+  };
+  try {
+    await f.connections.select('first');
+    await assert.rejects(f.connections.remove('first'), /revocation failed/);
+    assert.equal((await f.connections.config())?.id, 'first');
+    fail = false;
+    await f.connections.remove('second');
+    assert.equal((await f.connections.config())?.id, 'first');
+    await f.connections.remove('first');
+    assert.equal(await f.connections.config(), null);
+    await assert.rejects(f.connections.command('status'), /Connect and select/);
+    await assert.rejects(f.connections.remove('unknown'), /has not connected/);
+  } finally { await rm(f.home, { recursive: true, force: true }); }
+});
+
+test('removal waits for selection so a removed agent cannot become selected again', async () => {
+  const f = await fixture();
+  try {
+    const selecting = f.connections.select('first');
+    const removing = f.connections.remove('first');
+    await Promise.all([selecting, removing]);
+    assert.equal(await f.connections.config(), null);
+    assert.ok((await f.calls()).includes('agent remove first'));
   } finally { await rm(f.home, { recursive: true, force: true }); }
 });

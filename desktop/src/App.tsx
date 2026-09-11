@@ -9,7 +9,7 @@ type Portability = { status: 'excluded' | 'possible' | 'no-known-restriction'; r
 type Cookie = { portability?: Portability; key: string; name: string; domain: string; path: string; httpOnly: boolean; secure: boolean; sameSite?: string | null; session: boolean };
 type Domain = { domain: string; cookies: Cookie[]; localStorage: string[]; sessionStorage: string[]; indexedDB: string[]; warnings: string[] };
 type Inventory = { profile: string; domains: Domain[] };
-type RemoteTab = { id: string; title: string; url: string; host: string; favicon?: string };
+type RemoteTab = { id: string; title: string; url: string; host: string; favicon?: string; source?: unknown };
 type Incoming = { id: string; received_at: string };
 // One short line of feedback, shown next to the thing the user just did.
 type Notice = { text: string; error?: boolean } | null;
@@ -94,7 +94,9 @@ function Browser({ endpoint, profiles, initialTabs, connected, reload, onAgentCh
     let cancelled = false;
     const poll = () => { void window.abra!.sandbox('browser-incoming').then(result => { if (!cancelled) setIncoming(result.incoming); }).catch(() => {}); };
     poll(); const timer = setInterval(poll, 15000);
-    return () => { cancelled = true; clearInterval(timer); };
+    window.addEventListener('focus', poll);
+    const unsubscribe = window.abra.onIncoming(poll);
+    return () => { cancelled = true; clearInterval(timer); window.removeEventListener('focus', poll); unsubscribe(); };
   }, [busy]);
   useEffect(() => setTabs(initialTabs), [initialTabs]);
   useEffect(() => {
@@ -282,7 +284,6 @@ function Browser({ endpoint, profiles, initialTabs, connected, reload, onAgentCh
         <span className="actions"><button disabled={busy || !connected} onClick={() => pull('browser-pull', { tab_id: tab.id })}>Pull here</button></span>
       </li>)}</ul>
         : !busy && connected && <p className="empty">No Chrome tabs open in the sandbox.</p>)}
-      {remoteOpen && <p className="muted">Pulling copies the tab with its cookies and site storage. The original stays open in the sandbox. Agents can also push one with <code>abra-teleport browser send-tab &lt;tab-id&gt;</code>.</p>}
       <NoticeLine notice={notices.remote} busy={busy} />
     </section>
 
@@ -316,6 +317,7 @@ function Browser({ endpoint, profiles, initialTabs, connected, reload, onAgentCh
 }
 
 export default function App() {
+  const [incomingNotice, setIncomingNotice] = useState('');
   const [health, setHealth] = useState<ConnectionHealth | null>(null);
   const [checking, setChecking] = useState(false);
   const [endpoint, setEndpoint] = useState<Endpoint | null>(null);
@@ -353,6 +355,7 @@ export default function App() {
     void Promise.all([local<Profile[]>(['browser', 'profiles']), local<Tab[]>(['browser', 'tabs'])])
       .then(([p, t]) => { setProfiles(p); setTabs(t); }).catch(error => setError(message(error)));
   }, []);
+  useEffect(() => window.abra?.onIncoming(setIncomingNotice), []);
 
   return <div className="app">
     <header className="bar">
@@ -360,6 +363,7 @@ export default function App() {
       <AgentMenu agent={endpoint?.provider || null} health={health} checking={checking} refresh={() => void refresh()} onConnected={refresh} />
     </header>
     {error && <p className="notice error banner" role="alert">{error}<button className="link" onClick={() => setError('')}>Dismiss</button></p>}
+    {incomingNotice && <p className="notice banner" role="status">{incomingNotice} Open Sandbox tabs to view.<button className="link" onClick={() => setIncomingNotice('')}>Dismiss</button></p>}
     {!ready ? <p className="notice center"><span className="spinner" />Starting up…</p>
       : endpoint ? <Browser key={endpoint.provider.id} endpoint={endpoint} profiles={profiles} initialTabs={tabs} connected={connected} reload={refreshTabs} onAgentChanged={refresh} />
       : <main className="content narrow">

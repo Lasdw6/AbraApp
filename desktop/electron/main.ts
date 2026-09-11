@@ -1,8 +1,9 @@
-import { app, BrowserWindow, dialog, ipcMain, nativeTheme } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, nativeTheme, Notification } from 'electron';
 import { copyFile } from 'node:fs/promises';
 import * as path from 'node:path';
 import { createConnections } from './connections.js';
 import { createTeleport } from './teleport.js';
+import { createIncomingMonitor, type IncomingHandoff } from './incoming.js';
 
 function runtime() {
   if (app.isPackaged) {
@@ -28,6 +29,34 @@ function runtime() {
 
 const teleport = createTeleport(runtime());
 const connections = createConnections({ home: app.getPath('home'), teleport });
+const notifications = new Set<Notification>();
+function showApp() {
+  let window = BrowserWindow.getAllWindows()[0];
+  if (!window) { createWindow(); window = BrowserWindow.getAllWindows()[0]; }
+  if (window.isMinimized()) window.restore();
+  window.show(); window.focus();
+}
+function notifyIncoming(items: IncomingHandoff[]) {
+  const groups = new Map<string, IncomingHandoff[]>();
+  for (const item of items) groups.set(item.agent_id, [...(groups.get(item.agent_id) || []), item]);
+  for (const group of groups.values()) {
+    const text = `${group[0].agent_name} sent ${group.length === 1 ? 'a tab' : `${group.length} tabs`}.`;
+    for (const window of BrowserWindow.getAllWindows()) window.webContents.send('abra:incoming', text);
+    if (!Notification.isSupported()) continue;
+    const notification = new Notification({ title: 'Abra', body: `${text} Open Sandbox tabs to view.`,
+      icon: path.join(__dirname, '../..', 'dist-web', 'icon.png') });
+    notifications.add(notification);
+    notification.on('click', showApp);
+    notification.on('close', () => notifications.delete(notification));
+    notification.on('failed', (_event, error) => { notifications.delete(notification); console.error('Abra notification failed:', error); });
+    notification.show();
+  }
+}
+const incoming = createIncomingMonitor({
+  file: path.join(process.env.ABRA_TELEPORT_HOME || path.join(app.getPath('home'), '.abra-teleport'), 'notified-handoffs.json'),
+  read: () => connections.incoming(), notify: notifyIncoming,
+});
+let incomingTimer: ReturnType<typeof setInterval> | undefined;
 ipcMain.handle('abra:provider-config', () => connections.config());
 ipcMain.handle('abra:agent-ticket', () => connections.ticket());
 ipcMain.handle('abra:export-installer', async () => {
@@ -42,6 +71,7 @@ ipcMain.handle('abra:connection-health', () => connections.health());
 ipcMain.handle('abra:agent-list', () => connections.list());
 ipcMain.handle('abra:agent-select', (_event, id) => connections.select(id));
 ipcMain.handle('abra:agent-rename', (_event, id, name) => connections.rename(id, name));
+ipcMain.handle('abra:agent-remove', (_event, id) => connections.remove(id));
 ipcMain.handle('abra:sandbox', (_event, action, payload, agentId) => connections.command(action, payload, agentId));
 
 async function local(args: string[]) {
@@ -75,8 +105,10 @@ app.whenReady().then(() => {
   if (process.platform === 'darwin' && !app.isPackaged) app.dock?.setIcon(path.join(__dirname, '../..', 'dist-web', 'icon.png'));
   if (process.platform === 'win32') app.setAppUserModelId('dev.abra.teleport');
   createWindow();
+  const poll = () => { void incoming.poll().catch(error => console.error('Abra inbox check failed:', error.message)); };
+  poll(); incomingTimer = setInterval(poll, 5000);
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
 });
 
 app.on('window-all-closed', () => app.quit());
-app.on('before-quit', () => { void teleport.close(); });
+app.on('before-quit', () => { clearInterval(incomingTimer); incoming.stop(); void teleport.close(); });

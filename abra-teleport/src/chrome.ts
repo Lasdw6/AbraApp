@@ -49,6 +49,20 @@ export async function chromeStatus() {
   catch { return null; }
 }
 
+// Browsers this sandbox can use without launching one: the attached or owned
+// Chrome, the configured endpoint, and any found on the agent's desktop.
+export async function knownBrowsers(limit = 8) {
+  const endpoints = new Set<string>();
+  const current = await chromeStatus();
+  if (current) endpoints.add(current.wsUrl);
+  const configured = process.env.ABRA_TELEPORT_CDP_URL;
+  for (const candidate of [...(configured ? [configured] : []), ...await browserCandidates()]) {
+    if (endpoints.size >= limit) break;
+    try { endpoints.add((await browserEndpoint(candidate)).wsUrl); } catch { /* Browser exited. */ }
+  }
+  return [...endpoints];
+}
+
 export function browserMode(flags: Record<string, unknown>) {
   if (flags.headed === true && flags.headless === true) throw new Error('choose either --headless or --headed');
   return flags.headed === true ? false : flags.headless === true ? true : undefined;

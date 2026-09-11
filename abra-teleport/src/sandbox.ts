@@ -1,5 +1,5 @@
 // Consumer handoffs use Abra peers. The sandbox owns its runtime and credentials.
-import { agentRemote } from './agent.js';
+import { agentRemote, TAB_ID } from './agent.js';
 import { browserPrepare, browserClose, browserRevoke, browserSend, browserReceive } from './browser.js';
 import { abra, ensureDaemon } from './abra.js';
 import { loadState } from './state.js';
@@ -9,6 +9,14 @@ import { readJson, writeJson } from './util.js';
 import path from 'node:path';
 import type { AgentDescriptor } from './types.js';
 
+// Agents older than the adapter inventory reject the command, its abra verb, or
+// the adapter verb. Any of those falls back to the previous tab list.
+const OLDER_AGENT = /not exposed by Teleport|unknown command|unrecognized subcommand|unknown operation|does not support inventory/i;
+
+function host(url: string) {
+  try { return new URL(url).hostname; } catch { return url; }
+}
+
 function result(raw: string, field: string) {
   try { return JSON.parse(raw); } catch { /* commands can emit progress first */ }
   for (const line of raw.split('\n')) {
@@ -17,14 +25,14 @@ function result(raw: string, field: string) {
   throw new Error('The agent returned an unreadable result.');
 }
 
-export async function sandboxCommand(action: string, config: AgentDescriptor, payload: Record<string, any> = {}) {
+export async function sandboxCommand(action: string, config: AgentDescriptor, payload: Record<string, any> = {}, request = agentRemote) {
   const activeFile = path.join(paths().home, 'handoff.json');
   const saved = await readJson(activeFile, {});
   let browsers = saved.browsers || (saved.browser ? [saved.browser] : []);
   if (browsers.length && saved.agent && saved.agent !== config.id) throw new Error('Bring back or revoke the active handoffs before switching agents.');
   const active = () => browsers.length ? { agent: config.id, browser: browsers.at(-1), browsers } : {};
   const save = () => writeJson(activeFile, active());
-  const json = async (args, timeout = 540000) => result(await agentRemote(config, args, timeout), 'completed');
+  const json = async (args, timeout = 540000) => result(await request(config, args, timeout), 'completed');
   const status = async () => {
     const value = await json(['browser', 'status'], 8000);
     if (!value.handoff) throw new Error('The sandbox could not confirm its browser sessions.');
@@ -43,9 +51,19 @@ export async function sandboxCommand(action: string, config: AgentDescriptor, pa
   };
   if (action === 'status') return { active: active() };
   if (action === 'connect') return { ...await json(['doctor'], 8000), active: active() };
-  if (action === 'browser-frame') return result(await agentRemote(config, ['browser', 'exec', '--', 'node', 'browser-cloud-screenshot.js']), 'image');
+  if (action === 'browser-frame') return result(await request(config, ['browser', 'exec', '--', 'node', 'browser-cloud-screenshot.js']), 'image');
   if (action === 'browser-input') return json(['browser', 'input', JSON.stringify(payload)]);
-  if (action === 'browser-tabs') return { tabs: (await json(['browser', 'available-tabs'])).map(({ source, ...tab }) => tab) };
+  if (action === 'browser-tabs') {
+    try {
+      const report = await json(['inventory']);
+      if (report.error) throw new Error(report.error);
+      return { tabs: (report.items || []).filter(item => item.transferable === true)
+        .map(item => ({ id: item.id, title: item.label || '', url: item.detail || '', host: host(item.detail || ''), source: item.source })) };
+    } catch (error) {
+      if (!OLDER_AGENT.test(String(error?.message || ''))) throw error;
+      return { tabs: (await json(['browser', 'available-tabs'])).map(({ source, ...tab }) => ({ ...tab, source: null })) };
+    }
+  }
   if (action === 'browser-incoming') {
     await ensureDaemon();
     const inbox = await abra(['inbox', '--kind', 'dev.abra.browser.session.v1']);
@@ -53,7 +71,7 @@ export async function sandboxCommand(action: string, config: AgentDescriptor, pa
   }
   if (action === 'browser-accept') { await receive(payload.id); return { returned: true }; }
   if (action === 'browser-pull') {
-    if (!/^[a-f0-9]{32}$/i.test(payload.tab_id || '')) throw new Error('Choose a sandbox tab.');
+    if (!TAB_ID.test(payload.tab_id || '')) throw new Error('Choose a sandbox tab.');
     const sent = await json(['browser', 'send-tab', payload.tab_id]);
     await receive(sent.snapshot_id);
     return { returned: true };

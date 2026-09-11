@@ -36,7 +36,7 @@ export async function connectAgent(ticket, name = os.hostname()) {
   const snapshot = await abra(['snapshot', control]);
   await abra(['send', paired.peer_id, '--snapshot', snapshot.snapshot_id, '--wait']);
   await abra(['send', paired.peer_id, '--kind', AGENT_KIND, '--source', JSON.stringify(descriptor), '--wait']);
-  return { connected: true, ...descriptor };
+  return { connected: true, ...descriptor, skill_command: 'abra-teleport skill' };
 }
 
 export async function agentTicket({ shortCode = true } = {}) {
@@ -50,8 +50,10 @@ export async function listAgents() {
   await ensureDaemon();
   const file = path.join(paths().home, 'agents.json');
   const agents = await readJson<Record<string, AgentDescriptor>>(file, {});
+  const trusted = new Set((await abra(['peers'])).map(peer => peer.peer_id));
+  for (const id of Object.keys(agents)) if (!trusted.has(id)) delete agents[id];
   const inbox = await abra(['inbox', '--kind', AGENT_KIND]);
-  for (const item of inbox.filter(item => !item.read)) {
+  for (const item of inbox.filter(item => !item.read && trusted.has(item.from))) {
     const destination = path.join(paths().home, 'connections', item.id);
     await abra(['accept', item.id, destination, '--no-import']);
     const descriptor = await readJson(path.join(destination, 'agent.json'));
@@ -60,6 +62,19 @@ export async function listAgents() {
   }
   await writeJson(file, agents);
   return Object.values(agents);
+}
+
+export async function removeAgent(id: string) {
+  if (!/^[a-f0-9]{64}$/.test(id || '')) throw new Error('Choose a valid agent to remove.');
+  await ensureDaemon();
+  const result = await abra(['pair', 'remove', id]);
+  const file = path.join(paths().home, 'agents.json');
+  const agents = await readJson<Record<string, AgentDescriptor>>(file, {});
+  delete agents[id];
+  await writeJson(file, agents);
+  const handoff = path.join(paths().home, 'handoff.json');
+  if ((await readJson(handoff, {})).agent === id) await writeJson(handoff, {});
+  return { ...result, disconnected: true };
 }
 
 export async function agentRemote(config: AgentDescriptor, argv: string[], timeout = 540000) {
@@ -71,12 +86,16 @@ export async function agentRemote(config: AgentDescriptor, argv: string[], timeo
   return response.result.stdout;
 }
 
+// Bare CDP target ids plus the prefixed ids the browser-session adapter reports.
+export const TAB_ID = /^(?:[a-f0-9]{32}|managed:[a-f0-9]{32}|cdp:[a-f0-9]{8}:[a-f0-9]{32}|chrome:[A-Za-z0-9_-]{1,64})$/i;
+
 export function agentArguments(argv: unknown, agent: { controller: string }) {
   if (!Array.isArray(argv) || argv.some(x => typeof x !== 'string') || JSON.stringify(argv).length > 7500) throw new Error('Invalid agent request.');
   const [group, action] = argv;
   if (group === 'doctor' && argv.length === 1) return argv;
+  if (group === 'inventory' && argv.length === 1) return argv;
   if (group === 'browser' && action === 'available-tabs' && argv.length === 2) return argv;
-  if (group === 'browser' && action === 'send-tab' && argv.length === 3 && /^[a-f0-9]{32}$/i.test(argv[2])) return argv;
+  if (group === 'browser' && action === 'send-tab' && argv.length === 3 && TAB_ID.test(argv[2])) return argv;
   if (group === 'browser' && action === 'input' && argv.length === 3) return argv;
   if (group === 'browser' && action === 'exec') {
     const index = argv[2] === '--' ? 4 : 3;

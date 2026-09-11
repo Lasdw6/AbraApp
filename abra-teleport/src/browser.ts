@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { abra, browserAdapterDirectory, ensureDaemon, ensurePrivateMaterialization } from './abra.js';
-import { browserMode, chromeStatus, ensureChrome, matchesBrowser, stopChrome as stopManagedChrome } from './chrome.js';
+import { browserMode, chromeStatus, ensureChrome, knownBrowsers, matchesBrowser, stopChrome as stopManagedChrome } from './chrome.js';
 import { ensureChromeProfile, selectedBrowserState } from './browser-source.js';
 import { chooseInbox } from './inbox.js';
 import { paths } from './paths.js';
@@ -14,6 +14,7 @@ import { browserCandidates, browserEndpoint } from './browser-discovery.js';
 import { managedTabs } from './managed-browser-source.js';
 
 const KIND = 'dev.abra.browser.session.v1';
+const BROWSER_ADAPTER = 'dev.abra.browser-session';
 
 function domainOptions(flags, receiving = false) {
   const included = flagList(receiving ? (flags.allow ?? flags.domains) : flags.domains);
@@ -228,9 +229,23 @@ export async function sandboxBrowserTabs() {
   return tabs;
 }
 
+// Ids the browser-session adapter reports; bare target ids come from the older
+// available-tabs path.
+const INVENTORY_ID = /^(?:managed|chrome|cdp):/;
+
+export async function browserSessionInventory() {
+  await ensureDaemon();
+  // The adapter lists tabs itself; this only names the browsers this sandbox
+  // already has. Nothing is launched.
+  const endpoints = await knownBrowsers();
+  const options = endpoints.length ? ['--adapter-option', `cdp_urls=${JSON.stringify(endpoints)}`] : [];
+  return abra(['inventory', '--adapter', BROWSER_ADAPTER, ...options]);
+}
+
 export async function browserSendTab(tabId: string) {
   const agent = await readJson(path.join(paths().home, 'agent.json'), null);
   if (!agent?.controller) throw new Error('Connect this sandbox to a laptop first.');
+  if (INVENTORY_ID.test(tabId)) return sendInventoryTab(agent.controller, tabId);
   const tab = (await sandboxBrowserTabs()).find(item => item.id === tabId);
   if (!tab) throw new Error('That sandbox tab is no longer available. Refresh the tab list.');
   await browserPrepare({ profile: 'active', url: tab.url, title: tab.title,
@@ -238,4 +253,16 @@ export async function browserSendTab(tabId: string) {
   const session = (await loadState()).browser.active_context_id;
   try { return await browserSend(agent.controller, { 'all-domains': true, session }, 'down'); }
   finally { await browserRevoke(session); }
+}
+
+// The adapter already describes the exact tab, so this sends its source without
+// capturing a separate local selection first.
+async function sendInventoryTab(peer: string, tabId: string) {
+  const report = await browserSessionInventory();
+  const item = (report.items || []).find(entry => entry.id === tabId);
+  if (!item || item.transferable !== true || !item.source || typeof item.source !== 'object') {
+    throw new Error('That sandbox tab is no longer available. Refresh the tab list.');
+  }
+  const sent = await abra(['send', peer, '--kind', KIND, '--source', JSON.stringify(item.source), '--wait']);
+  return { ...sent, state: 'acked', peer, direction: 'down', domains: 'all' };
 }

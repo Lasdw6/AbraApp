@@ -19,14 +19,19 @@ Pairing grants device trust. Only pair agents you trust. The remote interface al
 
 Pick a local Chrome tab and choose its cookies and site storage. **Send to your agent** creates an isolated browser context in the sandbox. **Send another tab** returns to the picker while existing sessions remain available in the navigation bar. Each session has its own **Bring back** and **Revoke session** actions; returning one does not remove the others.
 
-Open **Sandbox tabs** to list HTTP/HTTPS tabs in compatible Chrome browsers on the agent’s display. Choose a tab to pull its portable cookies and site storage to the laptop. The app does not deliberately close the original tab. Chrome must expose a local debugging endpoint for Abra to read it.
+Open **Sandbox tabs** to list HTTP/HTTPS tabs in compatible Chrome browsers on the agent’s display. The list comes from `abra-teleport inventory`, which reads the browser adapter inventory through Abra; agents without that command fall back to `abra-teleport browser available-tabs`. Choose a tab to pull its portable cookies and site storage to the laptop. The app does not deliberately close the original tab. Chrome must expose a local debugging endpoint for Abra to read it.
 
 Agents can initiate a send using the installed CLI:
 
 ```sh
+abra-teleport inventory
 abra-teleport browser available-tabs
 abra-teleport browser send-tab <tab-id>
 ```
+
+`inventory` prints the browser-session adapter report. `send-tab` accepts an
+inventory id such as `managed:<target-id>` or `cdp:<endpoint>:<target-id>` and sends that item’s source
+directly, or a bare CDP target id from `available-tabs`.
 
 The send is pinned to the paired laptop. Abra captures only the selected tab’s portable cookies, storage, and page state. It appears under **Sandbox tabs → Sent by your agent**; choose **Open on this computer** to import it. Receiving a tab does not run a command from the agent. Previously received tabs can be opened while the sandbox is offline.
 

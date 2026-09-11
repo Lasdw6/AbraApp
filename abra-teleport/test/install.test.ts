@@ -29,12 +29,12 @@ test('connection command fails when the installer download fails', { skip: proce
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
-test('bootstrap upgrades an old CLI for short codes, reuses it, and rejects a corrupt archive', { skip: process.platform === 'win32' }, async () => {
+test('bootstrap upgrades a CLI without the skill, reuses it, and rejects a corrupt archive', { skip: process.platform === 'win32' }, async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'abra-bootstrap-test-'));
   try {
     const bin = path.join(root, 'bin'), mock = path.join(root, 'mock'), staged = path.join(root, 'package/abra-teleport/scripts');
     await Promise.all([mkdir(bin), mkdir(mock), mkdir(staged, { recursive: true })]);
-    await writeFile(path.join(staged, 'install-agent.sh'), `#!/bin/bash\nset -eu\nprintf '#!/bin/bash\\nif [[ "$1" == --help ]]; then echo "agent connect <ticket-or-code> (8-character pairing codes)"; else echo "$1 $2" >> "$PAIR_LOG"; fi\\n' > "$ABRA_TELEPORT_BIN_DIR/abra-teleport"\nchmod +x "$ABRA_TELEPORT_BIN_DIR/abra-teleport"\n`);
+    await writeFile(path.join(staged, 'install-agent.sh'), `#!/bin/bash\nset -eu\nprintf '#!/bin/bash\\nif [[ "$1" == --help ]]; then echo "agent connect <ticket-or-code> (8-character pairing codes); abra-teleport skill"; else echo "$1 $2" >> "$PAIR_LOG"; fi\\n' > "$ABRA_TELEPORT_BIN_DIR/abra-teleport"\nchmod +x "$ABRA_TELEPORT_BIN_DIR/abra-teleport"\n`);
     const archive = path.join(root, 'archive.tar.gz');
     await exec('tar', ['-czf', archive, '-C', path.join(root, 'package'), 'abra-teleport']);
     await writeFile(path.join(mock, 'curl'), '#!/bin/bash\nset -eu\necho download >> "$DOWNLOAD_LOG"\nwhile [[ "$1" != -o ]]; do shift; done\ncp "$FIXTURE_ARCHIVE" "$2"\n', { mode: 0o755 });
@@ -42,7 +42,7 @@ test('bootstrap upgrades an old CLI for short codes, reuses it, and rejects a co
     const script = path.join(root, 'connect.sh');
     await writeFile(script, template.replace('@ARCHIVE_URL@', 'https://example.com/agent.tar.gz').replace('@ARCHIVE_SHA256@', digest));
     const env = { ...process.env, PATH: `${mock}:/usr/bin:/bin`, ABRA_TELEPORT_BIN_DIR: bin, PAIR_LOG: path.join(root, 'pairs'), DOWNLOAD_LOG: path.join(root, 'downloads'), FIXTURE_ARCHIVE: archive };
-    await writeFile(path.join(bin, 'abra-teleport'), '#!/bin/bash\necho \"agent connect ticket-or-code\"\n', { mode: 0o755 });
+    await writeFile(path.join(bin, 'abra-teleport'), '#!/bin/bash\necho \"agent connect ticket-or-code (8-character pairing codes)\"\n', { mode: 0o755 });
     await exec('bash', [script, 'ABRA-ABCDEFGH'], { env });
     await exec('bash', [script, 'abra-pair/1/fixture'], { env });
     assert.equal((await readFile(env.DOWNLOAD_LOG, 'utf8')).trim(), 'download');
@@ -71,7 +71,7 @@ test('installed short-code CLI pairs without downloading again', { skip: process
   const root = await mkdtemp(path.join(os.tmpdir(), 'abra-short-reuse-'));
   try {
     const cli = path.join(root, 'abra-teleport');
-    await writeFile(cli, '#!/bin/bash\nif [[ "$1" == --help ]]; then echo "agent connect <ticket-or-code> (8-character pairing codes)"; else printf "%s" "$3" > "$PAIR_LOG"; fi\n', { mode: 0o755 });
+    await writeFile(cli, '#!/bin/bash\nif [[ "$1" == --help ]]; then echo "agent connect <ticket-or-code> (8-character pairing codes); abra-teleport skill"; else printf "%s" "$3" > "$PAIR_LOG"; fi\n', { mode: 0o755 });
     const script = path.join(root, 'connect.sh');
     await writeFile(script, template);
     const code = 'ABRA-ABCDEFGH';

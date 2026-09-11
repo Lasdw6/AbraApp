@@ -1,7 +1,6 @@
-import { browserSendTab, sandboxBrowserTabs } from './browser.js';
 import path from 'node:path';
 import { abra, abraBinary, browserAdapterDirectory, daemonStatus, ensureDaemon, stopDaemon } from './abra.js';
-import { browserClose, browserExec, browserPrepare, browserReceive, browserRevoke, browserSend, browserStatus } from './browser.js';
+import { browserClose, browserExec, browserPrepare, browserReceive, browserRevoke, browserSend, browserSendTab, browserSessionInventory, browserStatus, sandboxBrowserTabs } from './browser.js';
 import { browserChromeTabs, browserCookieInventory, browserInventory, browserProfiles, browserTabInventory } from './browser-source.js';
 import { browserMode, ensureChrome } from './chrome.js';
 import { paths } from './paths.js';
@@ -15,12 +14,16 @@ Setup and pairing
   abra-teleport agent connect <ticket-or-code> [name]  (8-character pairing codes)
   abra-teleport agent ticket [--full]
   abra-teleport agent list
+  abra-teleport agent remove <peer-id>
   abra-teleport setup
   abra-teleport doctor
+  abra-teleport skill
+  abra-teleport skill install [--dir <skills-directory>] [--force]
   abra-teleport pair ticket
   abra-teleport pair add <ticket>
   abra-teleport peers
   abra-teleport inbox
+  abra-teleport inventory
   abra-teleport browser available-tabs
   abra-teleport browser send-tab <tab-id>
   abra-teleport daemon stop
@@ -78,7 +81,7 @@ async function doctor() {
 export async function main(argv) {
   const browserMutation = argv[0] === 'browser' && !['status', 'tabs', 'profiles'].includes(argv[1]);
   const sandboxMutation = argv[0] === 'sandbox' && !['status', 'connect', 'browser-incoming'].includes(argv[1]);
-  if (browserMutation || sandboxMutation) {
+  if (browserMutation || sandboxMutation || (argv[0] === 'agent' && argv[1] === 'remove')) {
     const { withBrowserLock } = await import('./browser-lock.js');
     return withBrowserLock(() => dispatch(argv));
   }
@@ -104,7 +107,7 @@ export async function execute(argv: string[], input = ''): Promise<string> {
 
 async function dispatch(argv) {
   if (argv[0] === 'agent') {
-    const { connectAgent, agentTicket, listAgents, agentRemote } = await import('./agent.js');
+    const { connectAgent, agentTicket, listAgents, agentRemote, removeAgent } = await import('./agent.js');
     if (argv[1] === 'connect') return output(await connectAgent(argv[2], argv[3]));
     if (argv[1] === 'ticket') return output(await agentTicket({ shortCode: !argv.includes('--full') }));
     if (argv[1] === 'health') {
@@ -117,13 +120,14 @@ async function dispatch(argv) {
       return output(await (await import('./connection-health.js')).checkConnection(JSON.parse(input).config));
     }
     if (argv[1] === 'list') return output(await listAgents());
+    if (argv[1] === 'remove') return output(await removeAgent(argv[2]));
     if (argv[1] === 'remote') {
       let input = commandInput ?? '';
       if (commandInput === undefined) for await (const chunk of process.stdin) input += chunk;
       const request = JSON.parse(input);
       write(await agentRemote(request.config, request.argv)); return;
     }
-    throw new Error('agent needs connect, ticket, list, or remote');
+    throw new Error('agent needs connect, ticket, list, remove, or remote');
   }
   if (argv[0] === 'browser' && argv[1] === 'input') {
     const { handle } = await import('../scripts/sandbox-agent.js');
@@ -153,9 +157,19 @@ async function dispatch(argv) {
   }
 
   if (group === 'setup') return output(await ensureDaemon());
+  if (group === 'skill') {
+    const { readSkill, installSkill } = await import('./skill.js');
+    if (!action) { write(await readSkill()); return; }
+    if (action === 'install') {
+      if (flags.dir !== undefined && typeof flags.dir !== 'string') throw new Error('skill install --dir needs a skills directory');
+      return output(await installSkill(flags.dir, flags.force === true));
+    }
+    throw new Error('skill supports install, or no argument to read the guide');
+  }
   if (group === 'doctor') return output(await doctor());
   if (group === 'peers') { await ensureDaemon(); return output(await abra(['peers'])); }
   if (group === 'inbox') { await ensureDaemon(); return output(await abra(['inbox'])); }
+  if (group === 'inventory') return output(await browserSessionInventory());
   if (group === 'daemon' && action === 'stop') return output(await stopDaemon());
   if (group === 'pair') {
     await ensureDaemon();

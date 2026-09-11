@@ -1,5 +1,6 @@
 {
   "name": "@abra/desktop",
+  "productName": "Abra Teleport",
   "version": "0.3.0-rc.3",
   "private": true,
   "main": "build-electron/electron/main.js",
@@ -55,6 +56,10 @@
       {
         "from": "../abra-teleport/build/scripts",
         "to": "Runtime/wrapper/scripts"
+      },
+      {
+        "from": "../abra-teleport/build/skills",
+        "to": "Runtime/wrapper/skills"
       },
       {
         "from": "../abra-teleport/build/package.json",

@@ -24,6 +24,14 @@ test('agent rejects arbitrary commands and pins browser destinations', () => {
   assert.deepEqual(agentArguments(['browser', 'down', 'attacker', '--session', 'B'.repeat(32)], agent), ['browser', 'down', agent.controller, '--all-domains', '--session', 'B'.repeat(32)]);
   assert.throws(() => agentArguments(['browser', 'revoke', '--session', '../bad'], agent));
   assert.throws(() => agentArguments(['browser', 'send-tab', '../bad'], agent));
+  assert.deepEqual(agentArguments(['inventory'], agent), ['inventory']);
+  assert.throws(() => agentArguments(['inventory', 'browser'], agent));
+  for (const id of ['a'.repeat(32), `managed:${'a'.repeat(32)}`, 'chrome:42']) {
+    assert.deepEqual(agentArguments(['browser', 'send-tab', id], agent), ['browser', 'send-tab', id]);
+  }
+  for (const id of ['managed:../escape', 'chrome:$(whoami)', `managed:${'z'.repeat(32)}`, 'other:42']) {
+    assert.throws(() => agentArguments(['browser', 'send-tab', id], agent));
+  }
 });
 
 test('binary lookup follows a changed explicit runtime', async () => {
@@ -136,10 +144,17 @@ test('pairing command connects two isolated agents and controls the remote CLI',
     assert.equal(lost.status, 'unreachable'); assert.equal(lost.last_seen, live.last_seen);
     await command(b, ['setup']);
     assert.equal((await health()).status, 'connected');
+    const removed = await command(a, ['agent', 'remove', connected.peer_id]);
+    assert.equal(removed.removed, true);
+    assert.deepEqual(await command(a, ['agent', 'list']), []);
+    assert.ok(!(await command(a, ['peers'])).some(peer => peer.peer_id === connected.peer_id));
+    assert.equal((await health()).status, 'unreachable');
     const nextTicket = await command(a, ['agent', 'ticket', '--full']);
     const reconnected = await command(b, ['agent', 'connect', nextTicket.command.match(/'([^']+)'/)[1], 'test sandbox']);
     assert.equal(reconnected.peer_id, connected.peer_id);
     assert.equal(reconnected.capsule_id, connected.capsule_id);
+    assert.equal((await command(a, ['agent', 'list'])).length, 1);
+    assert.equal((await health()).status, 'connected');
   } finally {
     for (const home of [a, b]) await command(home, ['daemon', 'stop']).catch(() => {});
     await rm(directory, { recursive: true, force: true });

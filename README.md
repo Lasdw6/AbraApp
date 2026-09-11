@@ -10,7 +10,22 @@ Open **Connect your agent**, create a connection command, and give it to your ag
 
 The CLI and observer run inside the sandbox. The app does not need Daytona API keys, SSH keys, or Firecracker host access. Pairing establishes trusted Abra devices. The sandbox must be able to reach Abra’s network; provider network restrictions can block the connection.
 
-Browser transfers include the cookies and site storage you select. Send multiple tabs without leaving earlier sessions behind; each can be returned or revoked separately. **Sandbox tabs** lets you pull a tab from the agent’s Chrome or open an incoming tab sent with `abra-teleport browser send-tab <tab-id>`. The app checks the selected sandbox every 15 seconds and shows whether it is connected, unreachable, or unpaired, plus the last successful contact time. A paired device can be offline; pairing alone is not a live connection.
+Browser transfers include the cookies and site storage you select. Send multiple tabs without leaving earlier sessions behind; each can be returned or revoked separately. **Sandbox tabs** lets you pull a tab from the agent’s Chrome or open an incoming tab sent with `abra-teleport browser send-tab <tab-id>`. The list comes from the agent’s browser adapter inventory when its CLI supports it; older agents use the previous tab list. The app checks the selected sandbox every 15 seconds and shows whether it is connected, unreachable, or unpaired, plus the last successful contact time. A paired device can be offline; pairing alone is not a live connection.
+
+## Agent skill
+
+The CLI includes an [Abra skill](abra-teleport/skills/abra/SKILL.md) for sending a
+chosen browser tab back to your laptop. The agent installer copies it to
+`~/.agents/skills/abra/SKILL.md`. Agents can also read it directly with
+`abra-teleport skill`, including in an already-running conversation.
+
+To install it elsewhere, run `abra-teleport skill install --dir /path/to/skills`.
+Set `ABRA_TELEPORT_SKILLS_DIR` to choose that directory during installation.
+An existing skill with different content is preserved unless you use `--force`.
+
+For a demo, give the agent a task, then ask: “Send that tab back to my laptop
+with Abra.” It lists its current tabs, sends the selected session, and confirms
+delivery. Open the incoming handoff under **Sandbox tabs** in the desktop app.
 
 ## Build
 

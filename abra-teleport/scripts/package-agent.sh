@@ -7,7 +7,7 @@ STAGE="$(mktemp -d)"
 trap 'rm -rf "$STAGE"' EXIT
 PACKAGE="$STAGE/abra-teleport"
 mkdir -p "$PACKAGE/runtime/core-source" "$ROOT/dist"
-for item in bin src adapters scripts package.json; do cp -R "$ROOT/build/$item" "$PACKAGE/"; done
+for item in bin src adapters scripts skills package.json; do cp -R "$ROOT/build/$item" "$PACKAGE/"; done
 cp "$CORE/adapters/sandbox/collector/observer.py" "$PACKAGE/runtime/observer.py"
 cp -R "$CORE/adapters/browser-session" "$PACKAGE/runtime/browser-session"
 cp -R "$CORE/adapters/lib" "$PACKAGE/runtime/lib"

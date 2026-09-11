@@ -3,6 +3,25 @@ import type { ConnectionHealth } from '../shared/contracts';
 
 function message(error: unknown) { return error instanceof Error ? error.message : String(error); }
 
+function RemoveAgent({ agent, onRemoved }: { agent: ProviderConfig; onRemoved: () => Promise<void> }) {
+  const [confirming, setConfirming] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const remove = async () => {
+    setBusy(true); setError('');
+    try { await window.abra!.agentRemove(agent.id); await onRemoved(); }
+    catch (error) { setError(message(error)); }
+    finally { setBusy(false); }
+  };
+  return <div>
+    {confirming ? <>
+      <p className="muted">Disconnect {agent.name}? This revokes its Abra access. Website sessions already shared with it may still work.</p>
+      <div className="actions"><button className="danger" disabled={busy} onClick={remove}>{busy ? 'Removing…' : 'Remove agent'}</button><button className="link" disabled={busy} onClick={() => setConfirming(false)}>Cancel</button></div>
+    </> : <button className="link danger" onClick={() => setConfirming(true)}>Remove</button>}
+    {error && <p className="notice error" role="alert">{error}</p>}
+  </div>;
+}
+
 function AgentName({ agent, onRenamed }: { agent: ProviderConfig; onRenamed: () => Promise<void> }) {
   const [editing, setEditing] = useState(false);
   const [name, setName] = useState(agent.name);
@@ -72,6 +91,7 @@ export function PairingForm({ onConnected, current }: { onConnected: () => Promi
       return <li key={agent.id} className="row static">
         <span className={`dot ${active ? 'online' : 'idle'}`} /><AgentName agent={agent} onRenamed={async () => { setAgents(await window.abra!.agentList()); await onConnected(); }} />
         <span className="actions">{active ? <span className="meta">In use</span> : <button disabled={Boolean(busy)} onClick={() => choose(agent.id)}>Use</button>}</span>
+        <RemoveAgent agent={agent} onRemoved={async () => { setAgents(await window.abra!.agentList()); await onConnected(); }} />
       </li>;
     })}</ul>}
     {status && <p role="status" className={status.tone === 'error' ? 'notice error' : 'notice'}>{status.text}</p>}
@@ -113,6 +133,7 @@ export default function AgentMenu({ agent, health, checking, refresh, onConnecte
           <button className="link" disabled={checking} onClick={refresh}>{checking ? 'Checking…' : 'Refresh'}</button>
         </div>
         {health?.status === 'unreachable' && <p className="notice error">Could not reach the sandbox. Check that it is running and that Abra is installed there.{health.error ? ` ${health.error}` : ''}</p>}
+        <RemoveAgent key={`remove-${agent.id}`} agent={agent} onRemoved={async () => { await onConnected(); setOpen(false); }} />
       </div>}
       {agent && !pairing
         ? <button className="link" onClick={() => setPairing(true)}>Connect another agent</button>

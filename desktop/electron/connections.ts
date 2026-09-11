@@ -1,8 +1,9 @@
-import { readFile, mkdir, writeFile, rename } from 'node:fs/promises';
+import { readFile, mkdir, writeFile, rename, rm } from 'node:fs/promises';
 import * as path from 'node:path';
 
 import type { AgentDescriptor as Agent } from '../shared/contracts.js';
 import type { TeleportService } from './teleport.js';
+import type { IncomingHandoff } from './incoming.js';
 
 function createConnections({ home, teleport }: { home: string; teleport: TeleportService }) {
   const stateHome = process.env.ABRA_TELEPORT_HOME || path.join(home, '.abra-teleport');
@@ -33,6 +34,12 @@ function createConnections({ home, teleport }: { home: string; teleport: Telepor
     const agents = await invoke<Agent[]>(['agent', 'list']);
     const aliases = await names();
     return agents.map(agent => named(agent, aliases));
+  }
+  async function incoming(): Promise<IncomingHandoff[]> {
+    const agents = new Map((await list()).map(agent => [agent.peer_id, agent]));
+    const inbox = await invoke<Array<{ id: string; from: string; kind: string; read: boolean; received_at: string }>>(['inbox']);
+    return inbox.filter(item => item.kind === 'dev.abra.browser.session.v1' && !item.read && agents.has(item.from))
+      .map(item => ({ id: item.id, agent_id: agents.get(item.from)!.id, agent_name: agents.get(item.from)!.name, received_at: item.received_at }));
   }
   function renameAgent(id: string, name: string) {
     const operation = namesQueue.then(async () => {
@@ -68,7 +75,10 @@ function createConnections({ home, teleport }: { home: string; teleport: Telepor
   }
   async function select(id: string) {
     if (pending) throw new Error('Wait for the current handoff to finish.');
-    return selectAgent(id);
+    pending += 1;
+    const operation = queue.then(() => selectAgent(id)).finally(() => { pending -= 1; });
+    queue = operation.catch(() => {});
+    return operation;
   }
   function command(action: string, payload: Record<string, unknown> = {}, agentId?: string) {
     pending += 1;
@@ -85,6 +95,18 @@ function createConnections({ home, teleport }: { home: string; teleport: Telepor
     queue = operation.catch(() => {});
     return operation;
   }
-  return { config, select, rename: renameAgent, command, health: async () => invoke(['agent', 'health'], { config: await config() }, 20000), ticket: () => invoke(['agent', 'ticket']), list };
+  function remove(id: string) {
+    pending += 1;
+    const operation = queue.then(async () => {
+      try {
+        if (!(await list()).some(agent => agent.id === id)) throw new Error('That agent has not connected.');
+        await invoke(['agent', 'remove', id]);
+        if ((await config())?.id === id) await rm(file, { force: true });
+      } finally { pending -= 1; }
+    });
+    queue = operation.catch(() => {});
+    return operation;
+  }
+  return { config, select, rename: renameAgent, remove, command, incoming, health: async () => invoke(['agent', 'health'], { config: await config() }, 20000), ticket: () => invoke(['agent', 'ticket']), list };
 }
 export { createConnections };
