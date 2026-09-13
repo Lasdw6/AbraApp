@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { existsSync } from 'node:fs';
 import { mkdtemp, mkdir, open, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -6,6 +7,10 @@ import test from 'node:test';
 import { writeJson } from '../build/src/util.js';
 import { assertManagedProfile } from '../build/src/profile-safety.js';
 import { requireDiskSpace, availableBytes } from '../build/src/disk-space.js';
+
+// The browser adapter lives in the pinned `abra/` submodule, which can be
+// uninitialized in a source checkout.
+const adapterUtil = new URL('../../abra/adapters/browser-session/lib/util.js', import.meta.url);
 
 test('failed state writes preserve existing data and remove partial temporary files', async t => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'abra-write-safety-'));
@@ -50,8 +55,11 @@ test('disk checks resolve nonexistent profile directories and reject low space',
   await requireDiskSpace(os.tmpdir(), 100, async () => 100);
 });
 
-test('Windows adapter preserves cookie session files when a write fails', { skip: process.platform !== 'win32' }, async t => {
-  const { writePrivate } = await import('../../abra/adapters/browser-session/lib/util.js');
+test('Windows adapter preserves cookie session files when a write fails', {
+  skip: process.platform !== 'win32' ? 'Windows only'
+    : !existsSync(adapterUtil) ? 'abra submodule is not initialized; run git submodule update --init --recursive' : false
+}, async t => {
+  const { writePrivate } = await import(adapterUtil.href) as { writePrivate: (file: string, contents: string) => Promise<void> };
   const root = await mkdtemp(path.join(os.tmpdir(), 'abra-cookie-write-'));
   const file = path.join(root, 'state.json');
   const probe = await open(path.join(root, 'probe'), 'w');

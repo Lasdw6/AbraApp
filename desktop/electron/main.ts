@@ -1,9 +1,17 @@
 import { app, BrowserWindow, dialog, ipcMain, nativeTheme, Notification } from 'electron';
+import electronUpdater from 'electron-updater';
 import { copyFile } from 'node:fs/promises';
 import * as path from 'node:path';
 import { createConnections } from './connections.js';
 import { createTeleport } from './teleport.js';
 import { createIncomingMonitor, type IncomingHandoff } from './incoming.js';
+
+export const PROTOCOL = 'abra-teleport';
+
+// A second launch must reuse the running app: the daemon, its named pipe, and
+// the managed Chrome profile can only be owned by one process at a time.
+const primary = app.requestSingleInstanceLock();
+if (!primary) app.quit();
 
 function runtime() {
   if (app.isPackaged) {
@@ -79,6 +87,25 @@ async function local(args: string[]) {
 }
 
 ipcMain.handle('abra:local', (_event, args) => local(args));
+
+// Matches --bg, --fg, and the 44px `.bar` in desktop/src/styles.css.
+function titleBarOverlay() {
+  const dark = nativeTheme.shouldUseDarkColors;
+  return { color: dark ? '#171717' : '#ffffff', symbolColor: dark ? '#e6e6e6' : '#1c1c1e', height: 44 };
+}
+
+/** Accepts an `abra-teleport://` deep link, such as a pairing ticket. */
+export function deepLink(argv: string[]) {
+  return argv.find(value => value.startsWith(`${PROTOCOL}://`)) || null;
+}
+
+function handleDeepLink(url: string | null) {
+  showApp();
+  // The app issues pairing tickets rather than accepting them, so there is no
+  // pairing entry point to route this into yet. Focus the window and record it.
+  if (url) console.log(`Abra received a deep link: ${url}`);
+}
+
 function createWindow() {
   const window = new BrowserWindow({
     width: 900,
@@ -87,7 +114,10 @@ function createWindow() {
     minHeight: 420,
     title: 'Abra Teleport',
     icon: path.join(__dirname, '../..', 'dist-web', 'icon.png'),
-    titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
+    // The renderer draws its own title bar (`.bar`, a drag region), so Windows
+    // only needs to overlay its window controls on top of it.
+    titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : process.platform === 'win32' ? 'hidden' : 'default',
+    ...(process.platform === 'win32' ? { titleBarOverlay: titleBarOverlay() } : {}),
     backgroundColor: nativeTheme.shouldUseDarkColors ? '#171717' : '#ffffff',
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
@@ -98,16 +128,34 @@ function createWindow() {
   });
   window.loadFile(path.join(__dirname, '../..', 'dist-web', 'index.html'));
   window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  if (process.platform === 'win32') {
+    const paint = () => { try { window.setTitleBarOverlay(titleBarOverlay()); } catch { /* Window closed. */ } };
+    nativeTheme.on('updated', paint);
+    window.once('closed', () => nativeTheme.removeListener('updated', paint));
+  }
 }
 
-app.whenReady().then(() => {
+app.on('second-instance', (_event, argv) => handleDeepLink(deepLink(argv)));
+app.on('open-url', (event, url) => { event.preventDefault(); handleDeepLink(url); });
+
+if (primary) app.whenReady().then(() => {
   app.setName('Abra Teleport');
+  // In development Electron is launched with a script path, which the registry
+  // entry has to repeat for Windows to hand the link back to the same app.
+  if (app.isPackaged) app.setAsDefaultProtocolClient(PROTOCOL);
+  else app.setAsDefaultProtocolClient(PROTOCOL, process.execPath, [path.resolve(process.argv[1] ?? '.')]);
   if (process.platform === 'darwin' && !app.isPackaged) app.dock?.setIcon(path.join(__dirname, '../..', 'dist-web', 'icon.png'));
   if (process.platform === 'win32') app.setAppUserModelId('dev.abra.teleport');
   createWindow();
   const poll = () => { void incoming.poll().catch(error => console.error('Abra inbox check failed:', error.message)); };
   poll(); incomingTimer = setInterval(poll, 5000);
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
+  const launchLink = deepLink(process.argv.slice(1));
+  if (launchLink) handleDeepLink(launchLink);
+  if (app.isPackaged) {
+    electronUpdater.autoUpdater.on('error', error => console.error('Abra update check failed:', error.message));
+    void electronUpdater.autoUpdater.checkForUpdatesAndNotify().catch(error => console.error('Abra update check failed:', error.message));
+  }
 });
 
 app.on('window-all-closed', () => app.quit());

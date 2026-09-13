@@ -13,7 +13,9 @@ Object.assign(process.env, {
   ABRA_OBSERVER: runtime.observer,
   ABRA_NODE_BIN: runtime.node,
   ABRA_TELEPORT_DESKTOP: '1',
-  PATH: [path.dirname(runtime.node), process.env.PATH, '/usr/local/bin', '/opt/homebrew/bin', '/usr/bin', '/bin'].filter(Boolean).join(path.delimiter),
+  // Unix tool directories are meaningless on Windows and only slow lookups.
+  PATH: [path.dirname(runtime.node), process.env.PATH,
+    ...(process.platform === 'win32' ? [] : ['/usr/local/bin', '/opt/homebrew/bin', '/usr/bin', '/bin'])].filter(Boolean).join(path.delimiter),
 });
 
 void import(pathToFileURL(path.join(runtime.wrapper, 'src/cli.js')).href).then(service => {

@@ -1,7 +1,7 @@
-import { chmod, mkdir, open, stat } from 'node:fs/promises';
+import { open, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { appRoot, browserAdapterCandidates, paths } from './paths.js';
-import { executableOnPath, exists, readJson, runJson, secureDir, writeJson } from './util.js';
+import { executableOnPath, exists, looksLikeElectron, readJson, runJson, secureDir, writeJson } from './util.js';
 
 import type { RunOptions } from './types.js';
 
@@ -29,7 +29,16 @@ export async function abraBinary() {
 }
 
 function daemonEnv() {
-  return { ABRA_BROWSER_DATA_DIR: paths().browserData, ABRA_NODE_BIN: process.env.ABRA_NODE_BIN || process.execPath };
+  const node = process.env.ABRA_NODE_BIN || process.execPath;
+  // Abra runs `.js` adapters with ABRA_NODE_BIN. When that is the packaged app
+  // itself, Electron only behaves like Node with this variable set. Upstream
+  // infers it, but set it here too so a daemon started from the desktop app
+  // always inherits it regardless of the engine version that is pinned.
+  return {
+    ABRA_BROWSER_DATA_DIR: paths().browserData,
+    ABRA_NODE_BIN: node,
+    ...(looksLikeElectron(node) ? { ELECTRON_RUN_AS_NODE: '1' } : {})
+  };
 }
 
 export async function abra<T = any>(args: string[], options: RunOptions = {}): Promise<T> {
@@ -134,7 +143,6 @@ export async function stopDaemon() {
 
 export async function ensurePrivateMaterialization(id) {
   const directory = path.join(paths().received, `${Date.now()}-${id}`);
-  await mkdir(path.dirname(directory), { recursive: true, mode: 0o700 });
-  await chmod(path.dirname(directory), 0o700);
+  await secureDir(path.dirname(directory));
   return directory;
 }

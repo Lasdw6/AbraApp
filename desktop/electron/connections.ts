@@ -1,5 +1,7 @@
-import { readFile, mkdir, writeFile, rename, rm } from 'node:fs/promises';
+import { readFile, writeFile, rm } from 'node:fs/promises';
 import * as path from 'node:path';
+
+import { replaceFile, secureDir } from './state-files.js';
 
 import type { AgentDescriptor as Agent } from '../shared/contracts.js';
 import type { TeleportService } from './teleport.js';
@@ -49,9 +51,9 @@ function createConnections({ home, teleport }: { home: string; teleport: Telepor
       if (!agent) throw new Error('That agent has not connected.');
       const aliases = await names();
       aliases[id] = name.trim();
-      await mkdir(stateHome, { recursive: true, mode: 0o700 });
+      await secureDir(stateHome);
       await writeFile(namesFile + '.tmp', JSON.stringify(aliases), { mode: 0o600 });
-      await rename(namesFile + '.tmp', namesFile);
+      await replaceFile(namesFile + '.tmp', namesFile);
       return named(agent, aliases);
     });
     namesQueue = operation.catch(() => {});
@@ -69,9 +71,9 @@ function createConnections({ home, teleport }: { home: string; teleport: Telepor
     return selected;
   }
   async function saveSelection(selected: Agent) {
-    await mkdir(path.dirname(file), { recursive: true, mode: 0o700 });
+    await secureDir(path.dirname(file), stateHome);
     await writeFile(file + '.tmp', JSON.stringify(selected), { mode: 0o600 });
-    await rename(file + '.tmp', file);
+    await replaceFile(file + '.tmp', file);
   }
   async function select(id: string) {
     if (pending) throw new Error('Wait for the current handoff to finish.');

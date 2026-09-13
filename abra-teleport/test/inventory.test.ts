@@ -29,7 +29,10 @@ async function sandboxHome(run: (argv: string[]) => Promise<string>) {
   return { home, restore, request: async (_config, argv: string[]) => run(argv) };
 }
 
-test('the inventory command asks abra for the browser-session adapter report', async () => {
+// The fake engine is a `#!/usr/bin/env node` script. Windows cannot execute a
+// shebang file, and a .cmd stand-in cannot be spawned without a shell, so this
+// test stays on POSIX; the adapter contract it covers is platform independent.
+test('the inventory command asks abra for the browser-session adapter report', { skip: process.platform === 'win32' }, async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'abra-inventory-cli-'));
   const home = path.join(directory, 'home'), adapter = path.join(directory, 'adapter');
   const binary = path.join(directory, 'abra'), calls = path.join(directory, 'calls');

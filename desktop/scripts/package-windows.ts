@@ -38,6 +38,12 @@ async function main() {
   const output = path.join(desktop, 'dist/windows-native');
   await fs.mkdir(output, { recursive: true });
   const config = path.join(output, 'builder.json');
+  // Preview builds are unsigned. To sign a production release, install the
+  // code-signing certificate in the current user's certificate store and add:
+  //   certificateSubjectName: 'Your Company Name',
+  //   signtoolOptions: { publisherName: 'Your Company Name', signingHashAlgorithms: ['sha256'], rfc3161TimeStampServer: 'http://timestamp.digicert.com' },
+  // to the `win` block below, and drop `signExecutable: false`. Never commit a
+  // certificate or its password; supply them through CI secrets.
   await fs.writeFile(config, JSON.stringify({ ...pkg.build, extraResources,
     directories: { output },
     win: { ...pkg.build.win, target: 'nsis', executableName: 'Abra Teleport', signExecutable: false },

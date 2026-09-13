@@ -11,7 +11,7 @@ jobs:
       matrix:
         os: [macos-15, windows-2022]
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 10
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
         with:
@@ -21,8 +21,27 @@ jobs:
           node-version: '22.23.2'
           cache: npm
       - run: npm ci
-      - name: Apply Windows compatibility patch
+      # Windows support lives upstream in the pinned engine, so an old pin can
+      # only produce confusing failures further down.
+      - name: Check the Abra submodule pin
         if: runner.os == 'Windows'
-        run: npx tsx scripts/build-windows-core.ts --prepare-only
+        run: npx tsx scripts/check-abra-pin.ts
+      - name: Read the pinned Rust toolchain
+        if: runner.os == 'Windows'
+        id: toolchain
+        shell: bash
+        run: echo "channel=$(sed -n 's/^ *channel *= *"\(.*\)"/\1/p' abra/rust-toolchain.toml | head -1 || true)" >> "$GITHUB_OUTPUT"
+      - uses: dtolnay/rust-toolchain@master
+        if: runner.os == 'Windows'
+        with:
+          toolchain: ${{ steps.toolchain.outputs.channel || 'stable' }}
+          targets: x86_64-pc-windows-msvc
+      - uses: Swatinem/rust-cache@v2
+        if: runner.os == 'Windows'
+        with:
+          workspaces: abra
+      - name: Check the native Windows engine
+        if: runner.os == 'Windows'
+        run: cargo check -p abra-cli --manifest-path abra/Cargo.toml
       - run: npm run check
       - run: npm test

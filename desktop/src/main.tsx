@@ -5,6 +5,7 @@ import './styles.css';
 
 // The macOS title bar is hidden, so the header leaves room for the traffic lights.
 if (navigator.userAgent.includes('Macintosh')) document.documentElement.classList.add('mac');
+if (navigator.userAgent.includes('Windows')) document.documentElement.classList.add('win');
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode><App /></React.StrictMode>,

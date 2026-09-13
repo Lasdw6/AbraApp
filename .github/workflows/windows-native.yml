@@ -1,6 +1,16 @@
 name: Desktop builds
 on:
   workflow_dispatch:
+  push:
+    tags:
+      - 'desktop-*'
+    branches:
+      - main
+    paths:
+      - 'abra'
+      - 'scripts/**'
+      - 'desktop/**'
+      - 'abra-teleport/**'
 
 permissions:
   contents: read
@@ -20,7 +30,7 @@ jobs:
             artifact: Abra-Teleport-mac-arm64
             file: desktop/dist/Abra-Teleport-mac-arm64.zip
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
         with:
@@ -32,6 +42,9 @@ jobs:
       - run: rustup update stable --no-self-update
       - run: rustup default stable
       - run: npm ci
+      - name: Check the Abra submodule pin
+        if: runner.os == 'Windows'
+        run: npx tsx scripts/check-abra-pin.ts
       - run: npm run check
       - run: ${{ matrix.command }}
       - uses: actions/upload-artifact@v4
@@ -51,6 +64,12 @@ jobs:
           if (!(Test-Path (Join-Path $destination 'Abra Teleport.exe'))) { throw 'Installed app is missing' }
           npx tsx scripts/check-windows-install.ts "$destination"
           if ($LASTEXITCODE -ne 0) { throw "Installed runtime check failed" }
+          $env:ABRA_WINDOWS_PACKAGED_TEST = '1'
+          npm --prefix desktop test
+          if ($LASTEXITCODE -ne 0) { throw "Packaged Windows runtime test failed" }
+      - name: Check the Windows named-pipe transport
+        if: runner.os == 'Windows'
+        run: cargo test -p cadabra --manifest-path abra/Cargo.toml local::
       - name: Check and zip the Mac app
         if: runner.os == 'macOS'
         shell: bash

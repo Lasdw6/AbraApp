@@ -36,7 +36,7 @@ npm ci
 npm run build
 ```
 
-Requires Node 22+, Rust 1.91+, and Python 3 for Linux observation. Desktop release builds require 8 GiB free and stop when disk space falls below a 2 GiB reserve. The standard desktop build targets macOS. For native Windows, see [Windows setup](WINDOWS.md); `npm run build:windows` creates a Windows x64 installer with a native core binary. The legacy WSL archive is available through `npm run build:windows:wsl`. `desktop/` contains Electron and React; `abra-teleport/` contains the internal CLI; `abra/` pins the core engine as a submodule.
+Requires Node 22+, Rust 1.91+, and Python 3 for Linux observation. Desktop release builds require 8 GiB free and stop when disk space falls below a 2 GiB reserve. The standard desktop build targets macOS. For native Windows, see [Windows setup](WINDOWS.md); `npm run build:windows` creates a Windows x64 installer with a native core binary. Windows engine support lives in the pinned `abra/` submodule, and the build stops early if that pin is older than it. The legacy WSL archive is available through `npm run build:windows:wsl`. `desktop/` contains Electron and React; `abra-teleport/` contains the internal CLI; `abra/` pins the core engine as a submodule.
 
 The build creates the app under `desktop/dist/` and installer assets under `abra-teleport/dist/`. It includes the builder’s native binary. Put additional native binaries at `abra-teleport/dist/native/<platform>-<arch>/abra` before building to ship those platforms without source compilation. Linux x64 release builds use musl to support different Linux distributions.
 

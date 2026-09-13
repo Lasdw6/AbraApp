@@ -2,6 +2,7 @@ import https from 'node:https';
 import { execFile, spawn } from 'node:child_process';
 import { promisify } from 'node:util';
 import assert from 'node:assert/strict';
+import { existsSync } from 'node:fs';
 import { mkdtemp, rm, readFile } from 'node:fs/promises';
 import http from 'node:http';
 import os from 'node:os';
@@ -11,8 +12,6 @@ import { abra, ensureDaemon, stopDaemon } from '../build/src/abra.js';
 import { connectAgent, listAgents, agentRemote } from '../build/src/agent.js';
 import { browserStatus, browserPrepare, browserReceive, browserRevoke, browserSend } from '../build/src/browser.js';
 import { chromeBinary, ensureChrome, stopChrome } from '../build/src/chrome.js';
-import { capture } from '../../abra/adapters/browser-session/lib/browser.js';
-import { CDP, attachPage, evalValue, waitForLoad } from '../../abra/adapters/browser-session/lib/cdp.js';
 
 import { browserChromeTabs, browserCookieInventory, selectedBrowserState } from '../build/src/browser-source.js';
 
@@ -21,7 +20,16 @@ import { paths } from '../build/src/paths.js';
 import { secureDir, sleep, writeJson } from '../build/src/util.js';
 import { waitForBrowser } from '../build/src/browser-discovery.js';
 
-const enabled = process.env.ABRA_TELEPORT_BROWSER_INTEGRATION === '1';
+// The adapter lives in the pinned `abra/` submodule, which a source checkout
+// can leave uninitialized; load it only when this suite actually runs.
+const adapterLib = new URL('../../abra/adapters/browser-session/lib/', import.meta.url);
+const requested = process.env.ABRA_TELEPORT_BROWSER_INTEGRATION === '1';
+const skip = !requested ? true
+  : existsSync(new URL('browser.js', adapterLib)) ? false
+  : 'abra submodule is not initialized; run git submodule update --init --recursive';
+const enabled = skip === false;
+const { capture } = enabled ? await import(new URL('browser.js', adapterLib).href) : ({} as any);
+const { CDP, attachPage, evalValue, waitForLoad } = enabled ? await import(new URL('cdp.js', adapterLib).href) : ({} as any);
 
 async function selectDevice(home) {
   process.env.ABRA_TELEPORT_HOME = home;
@@ -66,7 +74,7 @@ async function changeCloudBrowser(wsUrl, contextId) {
   } finally { cdp.close(); }
 }
 
-test('handoff reuses a sandbox browser, returns the tab, and preserves existing tabs and cookies', { skip: !enabled, timeout: 180000 }, async () => {
+test('handoff reuses a sandbox browser, returns the tab, and preserves existing tabs and cookies', { skip, timeout: 180000 }, async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'abra-teleport-browser-'));
   const homeA = path.join(root, 'a');
   const homeB = path.join(root, 'b');
@@ -179,7 +187,7 @@ test('handoff reuses a sandbox browser, returns the tab, and preserves existing 
 });
 
 
-test('managed browser selects one tab, scopes cookies/storage, and rejects a changed target', { skip: !enabled, timeout: 90000 }, async () => {
+test('managed browser selects one tab, scopes cookies/storage, and rejects a changed target', { skip, timeout: 90000 }, async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'abra-managed-selection-'));
   const original = { ...process.env };
   const web = await withServer();
@@ -234,7 +242,7 @@ test('managed browser selects one tab, scopes cookies/storage, and rejects a cha
   }
 });
 
-test('manual override sends selected restricted cookies and storage through a real round trip', { skip: !enabled, timeout: 120000 }, async () => {
+test('manual override sends selected restricted cookies and storage through a real round trip', { skip, timeout: 120000 }, async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'abra-ov-'));
   const homes = [path.join(root, 'a'), path.join(root, 'b')];
   const original = { ...process.env };

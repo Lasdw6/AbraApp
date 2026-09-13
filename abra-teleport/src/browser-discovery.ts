@@ -46,7 +46,9 @@ export async function browserCandidates({ procRoot = '/proc', platform = process
       if (!/^\d+$/.test(pid)) continue;
       try {
         const directory = path.join(procRoot, pid);
-        if ((await stat(directory)).uid !== process.getuid?.()) continue;
+        // procRoot is a real /proc only on Linux; elsewhere it is a fixture and
+        // there is no POSIX uid to compare against.
+        if (process.getuid && (await stat(directory)).uid !== process.getuid()) continue;
         const argv = (await readFile(path.join(directory, 'cmdline'), 'utf8')).split('\0');
         const environment = (await readFile(path.join(directory, 'environ'), 'utf8')).split('\0');
         const status = await readFile(path.join(directory, 'status'), 'utf8').catch(() => '');

@@ -16,6 +16,7 @@
     "desktop:build:windows:wsl": "npm run typecheck && npm run build && tsx scripts/package-windows-wsl.ts"
   },
   "dependencies": {
+    "electron-updater": "^6.8.9",
     "react": "19.1.0",
     "react-dom": "19.1.0"
   },
@@ -113,6 +114,19 @@
     },
     "win": {
       "icon": "assets/icon.ico"
-    }
+    },
+    "publish": {
+      "provider": "github",
+      "owner": "Lasdw6",
+      "repo": "AbraApp"
+    },
+    "protocols": [
+      {
+        "name": "Abra Teleport",
+        "schemes": [
+          "abra-teleport"
+        ]
+      }
+    ]
   }
 }

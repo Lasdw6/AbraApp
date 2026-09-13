@@ -1,16 +1,17 @@
 import { closeSync, openSync } from 'node:fs';
 import { readFile, rm } from 'node:fs/promises';
 import path from 'node:path';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { paths } from './paths.js';
 import { requireDiskSpace } from './disk-space.js';
 import { assertManagedProfile } from './profile-safety.js';
 import { browserCandidates, browserEndpoint, desktopEnvironment, waitForBrowser } from './browser-discovery.js';
-import { executableOnPath, exists, isProcessAlive, processIdentity, readJson, secureDir, sleep, writeJson } from './util.js';
+import { commandUsesProfile, executableOnPath, exists, isAlive, isProcessAlive, processIdentity, readJson, secureDir, sleep, writeJson } from './util.js';
 
 export async function chromeBinary() {
   const candidates = [
     process.env.CHROME_BIN,
+    ...windowsRegistryChromeCandidates(),
     ...windowsChromeCandidates(),
     process.platform === 'darwin' ? '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome' : null,
     await executableOnPath('google-chrome'),
@@ -44,7 +45,7 @@ export async function chromeStatus() {
   }
   if (!state || !await isProcessAlive(state.pid)) return null;
   const identity = await processIdentity(state.pid);
-  if (!identity || !state.started_at || identity.started_at !== state.started_at || !identity.command.includes(`--user-data-dir=${paths().chromeProfile}`)) return null;
+  if (!identity || !state.started_at || identity.started_at !== state.started_at || !commandUsesProfile(identity.command, paths().chromeProfile)) return null;
   try { return { ...state, wsUrl: await endpoint(state.port) }; }
   catch { return null; }
 }
@@ -145,10 +146,44 @@ export async function stopChrome() {
   }
   if (!state || !await isProcessAlive(state.pid)) return { stopped: false };
   const identity = await processIdentity(state.pid);
-  if (!identity || !state.started_at || identity.started_at !== state.started_at || !identity.command.includes(`--user-data-dir=${paths().chromeProfile}`)) throw new Error(`refusing to stop PID ${state.pid}; profile marker does not match`);
-  process.kill(state.pid, 'SIGTERM');
-  for (let attempt = 0; attempt < 100 && await isProcessAlive(state.pid); attempt++) await sleep(50);
-  return { stopped: !await isProcessAlive(state.pid) };
+  if (!identity || !state.started_at || identity.started_at !== state.started_at || !commandUsesProfile(identity.command, paths().chromeProfile)) throw new Error(`refusing to stop PID ${state.pid}; profile marker does not match`);
+  await requestExit(state.pid);
+  for (let attempt = 0; attempt < 100 && isAlive(state.pid); attempt++) await sleep(50);
+  if (process.platform === 'win32' && isAlive(state.pid)) {
+    // Chrome ignored the close request, so end its renderer tree as well.
+    spawnSync('taskkill.exe', ['/PID', String(state.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' });
+    for (let attempt = 0; attempt < 40 && isAlive(state.pid); attempt++) await sleep(50);
+  }
+  return { stopped: !isAlive(state.pid) };
+}
+
+// Node maps SIGTERM to TerminateProcess on Windows, which kills Chrome without
+// letting it flush cookies and session storage. Ask its windows to close first.
+export async function requestExit(pid: number, run = spawnSync) {
+  if (process.platform !== 'win32') { process.kill(pid, 'SIGTERM'); return 'signal'; }
+  const result = run('taskkill.exe', ['/PID', String(pid)], { windowsHide: true, stdio: 'ignore' });
+  if (result.error || result.status !== 0) {
+    try { process.kill(pid, 'SIGTERM'); } catch { /* Chrome already exited. */ }
+    return 'signal';
+  }
+  return 'close';
+}
+
+// Chrome registers its install path under App Paths, which covers custom
+// install locations that the Program Files list cannot know about.
+export function windowsRegistryChromeCandidates(platform = process.platform, run = spawnSync) {
+  if (platform !== 'win32') return [];
+  const found: string[] = [];
+  for (const hive of ['HKLM', 'HKCU']) {
+    const key = `${hive}\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\App Paths\\chrome.exe`;
+    const result = run('reg.exe', ['query', key, '/ve'], { encoding: 'utf8', windowsHide: true });
+    if (result.error || result.status !== 0) continue;
+    const value = /REG_(?:SZ|EXPAND_SZ)\s+(.+)/.exec(String(result.stdout || ''))?.[1]?.trim();
+    if (!value) continue;
+    const expanded = value.replace(/%([^%]+)%/g, (whole, name) => process.env[name] ?? whole).replace(/^"|"$/g, '');
+    if (expanded && !found.includes(expanded)) found.push(expanded);
+  }
+  return found;
 }
 
 export function windowsChromeCandidates(platform = process.platform, env = process.env) {

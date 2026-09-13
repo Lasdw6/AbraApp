@@ -69,7 +69,7 @@ test('Chrome startup waits for its debugging endpoint and stops when the process
   } finally { await new Promise<void>(resolve => server.close(() => resolve())); }
 });
 
-test('discovery selects Chrome on the agent display and ignores other agents and headless processes', { skip: process.platform === 'win32' }, async () => {
+test('discovery selects Chrome on the agent display and ignores other agents and headless processes', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'abra-processes-'));
   try {
     for (const [pid, display, port, extra] of [['1', ':4', '9226', ''], ['2', ':5', '9227', ''], ['3', ':4', '9228', '--headless=new'], ['4', ':4', '9229', '--type=renderer']]) {

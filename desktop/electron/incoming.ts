@@ -1,5 +1,7 @@
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { readFile, writeFile } from 'node:fs/promises';
 import * as path from 'node:path';
+
+import { replaceFile, secureDir } from './state-files.js';
 
 export interface IncomingHandoff { id: string; agent_id: string; agent_name: string; received_at: string }
 
@@ -29,9 +31,9 @@ export function createIncomingMonitor({ file, read, notify, startedAt = Date.now
     const fresh = items.filter(item => !seen!.has(key(item)));
     const next = new Set(items.map(key));
     if (firstRun || fresh.length || next.size !== seen.size || [...next].some(id => !seen!.has(id))) {
-      await mkdir(path.dirname(file), { recursive: true, mode: 0o700 });
+      await secureDir(path.dirname(file));
       await writeFile(file + '.tmp', JSON.stringify([...next]), { mode: 0o600 });
-      await rename(file + '.tmp', file);
+      await replaceFile(file + '.tmp', file);
     }
     seen = next;
     if (!stopped && fresh.length) notify(fresh);
