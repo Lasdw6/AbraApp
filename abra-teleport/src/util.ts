@@ -112,7 +112,7 @@ export function looksLikeElectron(binary: string | undefined) {
   if (Boolean(process.versions.electron) || process.env.ELECTRON_RUN_AS_NODE === '1') return true;
   if (!binary) return false;
   // Accept a Windows path on every platform; a mac runs these checks too.
-  const name = binary.split(/[\/]/).pop() ?? '';
+  const name = binary.split(/[\\/]/).pop() ?? '';
   return /^(electron|abra[ -]teleport)(\.exe)?$/i.test(name);
 }
 
