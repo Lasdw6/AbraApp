@@ -111,7 +111,9 @@ export function commandUsesProfile(command: string | undefined, profile: string)
 export function looksLikeElectron(binary: string | undefined) {
   if (Boolean(process.versions.electron) || process.env.ELECTRON_RUN_AS_NODE === '1') return true;
   if (!binary) return false;
-  return /^(electron|abra[ -]teleport)(\.exe)?$/i.test(path.basename(binary));
+  // Accept a Windows path on every platform; a mac runs these checks too.
+  const name = binary.split(/[\/]/).pop() ?? '';
+  return /^(electron|abra[ -]teleport)(\.exe)?$/i.test(name);
 }
 
 export async function readJson<T = any>(file: string, fallback: unknown = undefined): Promise<T> {
