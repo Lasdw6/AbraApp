@@ -69,7 +69,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "Packaged Windows runtime test failed" }
       - name: Check the Windows named-pipe transport
         if: runner.os == 'Windows'
-        run: cargo test -p cadabra --manifest-path abra/Cargo.toml local::
+        run: cargo test -p cadabra --manifest-path abra/Cargo.toml "local::"
       - name: Check and zip the Mac app
         if: runner.os == 'macOS'
         shell: bash
