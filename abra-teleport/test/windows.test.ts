@@ -93,16 +93,21 @@ test('resolved profile paths ignore verbatim prefixes, trailing separators, and 
 
 test('stopping managed Chrome asks it to close before ending its process tree', async () => {
   const calls: string[][] = [];
+  const signals: [number, string][] = [];
   const ok = ((_command: string, args: string[]) => { calls.push([...args]); return { status: 0 }; }) as never;
+  const signal = (pid: number, name: string) => { signals.push([pid, name]); };
   if (process.platform === 'win32') {
-    assert.equal(await requestExit(4321, ok), 'close');
+    assert.equal(await requestExit(4321, ok, signal), 'close');
     assert.deepEqual(calls, [['/PID', '4321']]);
     assert.ok(!calls[0].includes('/F'), 'the first attempt must not force-terminate Chrome');
+    assert.deepEqual(signals, []);
     // taskkill failing outright still falls back to a signal instead of hanging.
-    assert.equal(await requestExit(4321, (() => ({ status: 1 })) as never), 'signal');
+    assert.equal(await requestExit(4321, (() => ({ status: 1 })) as never, signal), 'signal');
+    assert.deepEqual(signals, [[4321, 'SIGTERM']]);
   } else {
-    assert.equal(await requestExit(process.pid, ok).catch(() => 'signal'), 'signal');
+    assert.equal(await requestExit(4321, ok, signal), 'signal');
     assert.deepEqual(calls, []);
+    assert.deepEqual(signals, [[4321, 'SIGTERM']]);
   }
 });
 

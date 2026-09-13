@@ -159,11 +159,11 @@ export async function stopChrome() {
 
 // Node maps SIGTERM to TerminateProcess on Windows, which kills Chrome without
 // letting it flush cookies and session storage. Ask its windows to close first.
-export async function requestExit(pid: number, run = spawnSync) {
-  if (process.platform !== 'win32') { process.kill(pid, 'SIGTERM'); return 'signal'; }
+export async function requestExit(pid: number, run = spawnSync, signal: (pid: number, name: NodeJS.Signals) => void = (target, name) => { process.kill(target, name); }) {
+  if (process.platform !== 'win32') { signal(pid, 'SIGTERM'); return 'signal'; }
   const result = run('taskkill.exe', ['/PID', String(pid)], { windowsHide: true, stdio: 'ignore' });
   if (result.error || result.status !== 0) {
-    try { process.kill(pid, 'SIGTERM'); } catch { /* Chrome already exited. */ }
+    try { signal(pid, 'SIGTERM'); } catch { /* Chrome already exited. */ }
     return 'signal';
   }
   return 'close';
